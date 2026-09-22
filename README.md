@@ -13,6 +13,9 @@ the settings page that configures all of it.
 desktop/           Tauri app: settings surface + embedded host
 backend/           Rust: HID framing, JSON-RPC, layout, lighting, actions
 plugins/codex-micro/   Claude Code + Codex CLI plugin that reports session state
+plugins/pi/            pi extension: harness events -> agent keys
+plugins/opencode/      opencode plugin: harness events -> agent keys
+plugins/deepseek/      DeepSeek Harness hooks-bridge config
 docs/PROTOCOL.md   the wire protocol, as reverse-engineered
 ```
 

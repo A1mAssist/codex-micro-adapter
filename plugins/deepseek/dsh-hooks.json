@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node <REPO>/plugins/codex-micro/hooks/report.mjs" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node <REPO>/plugins/codex-micro/hooks/report.mjs" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node <REPO>/plugins/codex-micro/hooks/report.mjs" }] }
+    ]
+  }
+}

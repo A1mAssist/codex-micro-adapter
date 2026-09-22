@@ -21,7 +21,9 @@ Everything below was checked against each harness's own docs or source on
 | Qwen Code | 21 hooks incl. Stop / Notification / PermissionRequest | `session_id` | `~/.qwen/settings.json` | docs-checked |
 | Gemini CLI | 11 hooks incl. AfterAgent / Notification | `session_id` | `~/.gemini/settings.json` | docs-checked |
 | Goose | 11 hooks incl. Stop / SessionEnd | `session_id` | plugin directory | docs-checked |
-| opencode | plugin bus: session.created / session.idle / permission.asked | `sessionID` | `.opencode/plugins/*.js` | docs-checked |
+| Pi | extension events: session_start / input / agent_settled / ui_prompt_start | `ctx.sessionManager.getSessionId()` | `plugins/pi/codex-micro.ts` | docs-checked |
+| opencode | plugin bus: session.created / session.idle / permission.asked | `sessionID` | `plugins/opencode/codex-micro.ts` | docs-checked |
+| DeepSeek Harness (`dsh`) | hooks bridge: SessionStart / UserPromptSubmit / Stop | `session_id` | `plugins/deepseek/` | docs-checked |
 | Continue CLI | Claude-Code-compatible hooks | `session_id` | reuses the Claude Code plugin | docs-checked |
 | Crush | PreToolUse only | `session_id` | keystrokes only | docs-checked |
 | Aider | no hooks; notifications-command only | none | keystrokes only | docs-checked |
@@ -98,9 +100,10 @@ Goose documents desktop shortcuts only, so its CLI keymap is **unverified**.
 
 ## opencode
 
-`.opencode/plugins/codex-micro.js`, or globally in
-`~/.config/opencode/plugins/`. opencode plugins run in-process, so this one
-talks to the control port directly:
+Ships as [`plugins/opencode/codex-micro.ts`](../plugins/opencode/codex-micro.ts).
+Copy it to `.opencode/plugins/` (one project) or
+`~/.config/opencode/plugins/` (every project). opencode plugins run in-process,
+so it talks to the control port directly:
 
 ```js
 import net from "node:net";
@@ -129,6 +132,50 @@ export const CodexMicro = async () => ({
 
 Keys: `escape` interrupts, `ctrl+x n` opens a session, `ctrl+x q` quits. The
 approval dialog's keys are **unverified**.
+
+## Pi
+
+[Pi](https://pi.dev) (`earendil-works/pi`, MIT) has no hooks config; its
+extension API is the surface. Ships as
+[`plugins/pi/codex-micro.ts`](../plugins/pi/codex-micro.ts) - copy it to
+`~/.pi/agent/extensions/` (every project) or `<repo>/.pi/extensions/` (one
+project, which needs project trust).
+
+| pi event | Agent key |
+| --- | --- |
+| `session_start` | Idle |
+| `input`, `tool_call`, `tool_execution_start` | Working |
+| `ui_prompt_start` | Awaiting approval |
+| `ui_prompt_end` | Working |
+| `agent_settled` | Unread |
+| `session_shutdown` | Off |
+
+The session id comes from `ctx.sessionManager.getSessionId()`, which the
+extension reads on every event. `agent_end` is deliberately not wired: it fires
+between turns, while `agent_settled` is the "pi has really stopped" signal.
+
+Keys (documented defaults): `enter` submits, `escape` interrupts,
+`shift+tab` cycles the thinking level, `ctrl+p` cycles models, `/new` starts a
+fresh session (no default key).
+
+## DeepSeek Harness
+
+The official `dsh` (MIT, developer preview) has no TUI - it ships a Web UI, an
+ACP stdio server and a Codex-style hooks bridge. This adapter uses the hooks
+bridge: ships as [`plugins/deepseek/`](../plugins/deepseek/README.md), reusing
+the shared `report.mjs`.
+
+| `dsh` hook | Agent key |
+| --- | --- |
+| `SessionStart` | Idle |
+| `UserPromptSubmit` | Working |
+| `Stop` | Unread |
+
+`PermissionRequest` is dropped by that bridge and there is no `SessionEnd`, so
+those two states need `dsh`'s ACP surface (`session/request_permission`,
+`session/close`) if you want them. There is nothing honest to bind on the
+keyboard side either: approval and stop are plain buttons in the Web UI with no
+key tokens.
 
 ## Continue CLI
 
