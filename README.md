@@ -128,6 +128,12 @@ then the waiting/working states, oldest first inside each. A manual
 States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 `awaiting-response`, `error`.
 
+`activation` answers `{"seq":N,"session":"<id>"|null}`: the last agent key the
+user tapped, for a harness UI that can jump to that session. A browser cannot
+open a socket, so the same answer is on `GET /activation` of the control port -
+that is what the dsh plugin's browser half polls. Both read a slot the device
+loop writes, so a poll keeps answering while the loop is busy with USB work.
+
 The bundled plugin does this for both Claude Code and Codex CLI:
 
 ```bash

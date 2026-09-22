@@ -49,6 +49,11 @@ pub enum Command {
     Brightness(u8),
     Selection(bool),
     Ping,
+    /// The last agent key the user tapped, as
+    /// `{"seq":N,"session":"<id>"|null}`, for a harness UI that can jump to a
+    /// session. The dsh browser half polls this over `GET /activation`; the
+    /// sequence number lets a poll tell a new tap from the same one.
+    Activation,
 }
 
 /// Parse one command line. The vocabulary matches the enums, kebab-cased.
@@ -88,6 +93,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 status,
             })
         }
+        "activation" => Ok(Command::Activation),
         "fleet" => match args.as_slice() {
             ["off"] | [] => Ok(Command::Fleet(None)),
             [status] => Ok(Command::Fleet(Some(enum_value(status)?))),
@@ -166,21 +172,48 @@ impl Job {
     }
 }
 
+/// The last agent key the user tapped, shared between the device loop (which
+/// writes it) and the control port (which answers it). It is deliberately not a
+/// queued command: a page's poll must answer even while USB work has the device
+/// loop busy.
+pub type Activation = Arc<Mutex<Option<(u64, String)>>>;
+
 /// Commands waiting for the device loop to pick up.
 #[derive(Clone, Default)]
-pub struct Queue(Arc<Mutex<Vec<Job>>>);
+pub struct Queue {
+    jobs: Arc<Mutex<Vec<Job>>>,
+    activation: Activation,
+}
 
 impl Queue {
     /// Enqueue and block until the host answers, for the socket path.
     fn ask(&self, command: Command) -> Result<String, String> {
         let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        self.0.lock().unwrap().push(Job { command, reply });
+        self.jobs.lock().unwrap().push(Job { command, reply });
         rx.recv_timeout(REPLY_TIMEOUT)
             .map_err(|_| "the host did not answer in time".to_string())
     }
 
     pub fn drain(&self) -> Vec<Job> {
-        std::mem::take(&mut *self.0.lock().unwrap())
+        std::mem::take(&mut *self.jobs.lock().unwrap())
+    }
+
+    /// The slot the device loop should write the last tap into.
+    pub fn activation(&self) -> Activation {
+        self.activation.clone()
+    }
+}
+
+/// What a poller sees: the last tap, or an empty slot before the first one.
+/// Session ids are validated on the way in (one short token, no quotes), so
+/// this is JSON without an escaping step.
+pub fn activation_json(activation: &Activation) -> String {
+    let Ok(slot) = activation.lock() else {
+        return "{\"seq\":0,\"session\":null}".to_string();
+    };
+    match &*slot {
+        Some((seq, session)) => format!("{{\"seq\":{seq},\"session\":\"{session}\"}}"),
+        None => "{\"seq\":0,\"session\":null}".to_string(),
     }
 }
 
@@ -207,19 +240,71 @@ fn handle(stream: TcpStream, queue: &Queue) {
     let Ok(mut writer) = stream.try_clone() else {
         return;
     };
-    let mut reader = BufReader::new(stream).take(MAX_LINE as u64);
+    let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    let reply = match reader.read_line(&mut line) {
+    let reply = match read_capped_line(&mut reader, &mut line) {
         Ok(0) => return,
         // the cap stopped the read before the sender finished a line
         Ok(_) if !line.ends_with('\n') => "err: line too long".to_string(),
+        // a browser can only speak HTTP; every harness uses the line protocol.
+        // OPTIONS is here for the preflight a browser may send the poll.
+        Ok(_) if line.starts_with("GET ") || line.starts_with("OPTIONS ") => {
+            http(&line, &mut reader, &mut writer, queue);
+            return;
+        }
         Ok(_) => match parse(&line) {
+            // answered from the shared slot, never queued: a poll must not wait
+            // for whatever the device loop is doing
+            Ok(Command::Activation) => activation_json(&queue.activation),
             Ok(command) => queue.ask(command).unwrap_or_else(|err| format!("err: {err}")),
             Err(err) => format!("err: {err}"),
         },
         Err(_) => return,
     };
     let _ = writer.write_all(format!("{reply}\n").as_bytes());
+    let _ = writer.flush();
+}
+
+/// Read one line, refusing anything longer than the line cap.
+fn read_capped_line(reader: &mut impl BufRead, line: &mut String) -> std::io::Result<usize> {
+    reader.by_ref().take(MAX_LINE as u64).read_line(line)
+}
+
+/// The browser face of the same port. A page cannot open a socket, so the one
+/// thing it may ask for is which agent key the user just tapped:
+///
+/// ```text
+/// GET /activation -> {"seq":3,"session":"8e53a70f-…"} | {"seq":3,"session":null}
+/// ```
+///
+/// The line protocol on this port is untouched; anything else answers 404.
+/// `OPTIONS /activation` is there for the preflight a browser may send.
+fn http(request: &str, reader: &mut impl BufRead, writer: &mut impl Write, queue: &Queue) {
+    // swallow the headers, so the browser sees a complete response
+    let mut header = String::new();
+    loop {
+        header.clear();
+        match read_capped_line(reader, &mut header) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if header.trim().is_empty() => break,
+            Ok(_) => {}
+        }
+    }
+    let mut parts = request.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let (status, body) = match (method, parts.next()) {
+        // a browser that decides to preflight the poll must not be told 404
+        ("OPTIONS", Some("/activation")) => ("204 No Content", String::new()),
+        (_, Some("/activation")) => ("200 OK", activation_json(&queue.activation)),
+        _ => ("404 Not Found", "{\"error\":\"not found\"}".to_string()),
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+         Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n\
+         Cache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = writer.write_all(response.as_bytes());
     let _ = writer.flush();
 }
 
@@ -297,6 +382,7 @@ mod tests {
         assert_eq!(parse("brightness 80"), Ok(Command::Brightness(80)));
         assert_eq!(parse("selection on"), Ok(Command::Selection(true)));
         assert_eq!(parse("selection false"), Ok(Command::Selection(false)));
+        assert_eq!(parse("activation"), Ok(Command::Activation));
     }
 
     #[test]
@@ -366,6 +452,80 @@ mod tests {
             "the socket reports what the host did, not just that it parsed"
         );
         host.join().unwrap();
+    }
+
+    #[test]
+    fn a_browser_poll_gets_the_last_tap() {
+        let queue = Queue::default();
+        let port = serve(0, queue.clone()).expect("bind");
+        *queue.activation().lock().unwrap() = Some((7, "dsh-1".to_string()));
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(b"GET /activation HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(
+            response.contains("Access-Control-Allow-Origin: *"),
+            "the page polls from another port and needs CORS: {response}"
+        );
+        assert!(
+            response.ends_with("{\"seq\":7,\"session\":\"dsh-1\"}"),
+            "{response}"
+        );
+    }
+
+    #[test]
+    fn a_preflight_gets_its_cors_answer() {
+        let queue = Queue::default();
+        let port = serve(0, queue.clone()).expect("bind");
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(
+                b"OPTIONS /activation HTTP/1.1\r\nOrigin: http://127.0.0.1:3080\r\n\
+                  Access-Control-Request-Method: GET\r\n\r\n",
+            )
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(
+            response.starts_with("HTTP/1.1 204 No Content"),
+            "{response}"
+        );
+        assert!(
+            response.contains("Access-Control-Allow-Methods: GET, OPTIONS"),
+            "a preflighted poll needs the methods it may use: {response}"
+        );
+    }
+
+    #[test]
+    fn an_activation_poll_never_waits_for_the_device_loop() {
+        // No fake host runs here: a queued command would sit out the 5s reply
+        // timeout. The tap slot is answered in place, so this returns at once -
+        // a page must not go blind while the loop is stuck in USB work.
+        let queue = Queue::default();
+        let port = serve(0, queue.clone()).expect("bind");
+        *queue.activation().lock().unwrap() = Some((2, "dsh-2".to_string()));
+        let started = std::time::Instant::now();
+        let reply = send(port, "activation").unwrap();
+        assert_eq!(reply, "{\"seq\":2,\"session\":\"dsh-2\"}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "answered from the shared slot, not the queue"
+        );
+    }
+
+    #[test]
+    fn a_browser_poll_for_anything_else_is_a_404() {
+        let queue = Queue::default();
+        let port = serve(0, queue.clone()).expect("bind");
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream.write_all(b"GET /nope HTTP/1.1\r\n\r\n").unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 404 Not Found"), "{response}");
+        assert!(queue.drain().is_empty(), "nothing reached the device");
     }
 
     #[test]

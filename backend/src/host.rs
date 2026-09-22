@@ -144,7 +144,7 @@ impl SessionSlots {
         self.windows.get(index).copied().flatten()
     }
 
-    #[cfg(test)]
+    /// Which session holds this key, if any.
     fn owner(&self, index: usize) -> Option<&str> {
         self.owners.get(index)?.as_deref()
     }
@@ -216,6 +216,14 @@ fn interest(status: SlotStatus) -> u8 {
     }
 }
 
+/// One agent-key tap as the host remembers it for a polling harness UI: the
+/// session the tapped key belongs to, under a sequence that always grows so a
+/// page can tell a fresh tap from the one it already followed.
+fn tapped(current: Option<(u64, String)>, session: &str) -> (u64, String) {
+    let seq = current.as_ref().map_or(1, |(seq, _)| seq + 1);
+    (seq, session.to_string())
+}
+
 pub struct Host<O: Opener> {
     pub device: Device<O>,
     /// Where keystrokes go: the real Windows one, or the logging one for dry runs.
@@ -226,6 +234,10 @@ pub struct Host<O: Opener> {
     slots: Vec<AgentSlot>,
     /// Session-to-key bookkeeping, so `session <id> …` can pick a key itself.
     sessions: SessionSlots,
+    /// The last agent key the user tapped, for a harness UI that can jump to a
+    /// session: the dsh browser half polls this over `activation`. Shared with
+    /// the control port, which answers polls while this loop is busy with USB.
+    activation: crate::control::Activation,
     fleet: Option<SlotStatus>,
     voice: VoiceState,
     selection: bool,
@@ -250,6 +262,7 @@ impl<O: Opener> Host<O> {
             brightness_percent,
             slots: crate::lighting::default_agent_slots(),
             sessions: SessionSlots::with_keys(usize::from(crate::lighting::AGENT_SLOT_COUNT)),
+            activation: crate::control::Activation::default(),
             fleet: None,
             voice: VoiceState::Idle,
             selection: false,
@@ -265,6 +278,12 @@ impl<O: Opener> Host<O> {
 
     pub fn set_bindings(&mut self, bindings: Bindings) {
         self.bindings = bindings;
+    }
+
+    /// Hand the control port the same tap slot this host writes to, so a page
+    /// can poll it while this loop is busy with USB.
+    pub fn share_activation(&mut self, slot: crate::control::Activation) {
+        self.activation = slot;
     }
 
     pub fn brightness_percent(&self) -> u8 {
@@ -380,6 +399,8 @@ impl<O: Opener> Host<O> {
                 self.device.set_selection_lighting_visible(visible);
                 "ok".to_string()
             }
+            // answered from the shared slot the control port also reads
+            Command::Activation => crate::control::activation_json(&self.activation),
         }
     }
 
@@ -461,6 +482,14 @@ impl<O: Opener> Host<O> {
             // window was seen the binding table says what the key does instead
             Trigger::AgentKey(index) => {
                 let slot = usize::from(index);
+                // A harness page can jump to its session, but only once it hears
+                // about the tap: this is what the `activation` command answers.
+                if let Some(session) = self.sessions.owner(slot).map(str::to_string) {
+                    if let Ok(mut shared) = self.activation.lock() {
+                        let next = tapped(shared.take(), &session);
+                        *shared = Some(next);
+                    }
+                }
                 match self
                     .sessions
                     .window(slot)
@@ -610,6 +639,17 @@ mod tests {
         let index = table.assign("g", &slots, now + Duration::from_secs(60));
         assert_eq!(index, 3, "an idle key changes hands before an unread one");
         assert_eq!(table.owner(3), Some("g"));
+    }
+
+    #[test]
+    fn a_tap_remembers_which_session_to_open() {
+        assert_eq!(tapped(None, "a"), (1, "a".to_string()));
+        assert_eq!(
+            tapped(Some((1, "a".to_string())), "b"),
+            (2, "b".to_string()),
+            "a polling page follows the highest sequence it has seen, so a \
+             repeated tap on the same key still counts as news"
+        );
     }
 
     #[test]

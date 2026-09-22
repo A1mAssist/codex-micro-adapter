@@ -218,14 +218,6 @@ fn run(live: bool) {
     );
 
     let queue = control::Queue::default();
-    match control::serve(config.control_port, queue.clone()) {
-        Ok(port) => println!("control: 127.0.0.1:{port}  (codex-micro-backend send ...)"),
-        Err(err) => eprintln!(
-            "control: 127.0.0.1:{} unavailable: {err}",
-            config.control_port
-        ),
-    }
-
     let performer: Box<dyn codex_micro_backend::actions::Performer> = if live {
         Box::new(codex_micro_backend::performer::WindowsPerformer)
     } else {
@@ -242,6 +234,16 @@ fn run(live: bool) {
         config.brightness_percent,
         config.lighting(),
     );
+    // the port answers an `activation` poll from this slot, so a page gets an
+    // answer even while the loop below is stuck in USB work
+    host.share_activation(queue.activation());
+    match control::serve(config.control_port, queue.clone()) {
+        Ok(port) => println!("control: 127.0.0.1:{port}  (codex-micro-backend send ...)"),
+        Err(err) => eprintln!(
+            "control: 127.0.0.1:{} unavailable: {err}",
+            config.control_port
+        ),
+    }
 
     loop {
         for job in queue.drain() {

@@ -56,13 +56,21 @@ filtered out: their session header is marked (`origin: 'subagent'`, or a
 `delegationDepth` above zero) and they never take a key. That is the same
 marker `dsh` checks itself when it decides whether a session is a subagent.
 
-Tapping an agent key brings that session's window forward. For `dsh` that is
-the browser window the session was last typing in. It cannot open one
-*particular* conversation from outside the page: `dsh` has no per-session deep
-link (the launch token is accepted on `/` only, every other path answers 401)
-and no session-switch shortcut. The only supported route in is a client-side
-plugin calling `uiWorkspace.openSession()`, which needs a host-to-plugin channel
-that does not exist yet.
+Tapping an agent key brings that session's window forward - for `dsh` the
+browser window it was last typing in - and then jumps the page to the
+conversation itself. The host remembers which session the tapped key belongs to;
+the plugin's browser half (`client.js`, wired in by the `dsh.client` declaration)
+polls `GET /activation` on the control port and calls
+`uiWorkspace.openSession()`.
+
+That poll is the only way in: `dsh` has no per-session URL (the launch token is
+accepted on `/` only, every other path answers 401) and no session-switch
+shortcut. Two things worth knowing:
+
+- The host port is fixed in `client.js`; edit `HOST` there if you run the host
+  on another port.
+- A tap from before the page loaded is not followed: the first answer only says
+  where the sequence stands, so a stale tap cannot yank the page around.
 
 ## Keyboard
 

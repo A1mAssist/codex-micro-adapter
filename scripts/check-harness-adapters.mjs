@@ -138,6 +138,44 @@ seam("agent/created", { agent: { session: { header: { id: "dsh-main" } } } });
 
 await expect("dsh skips subagents", ["session dsh-main idle"]);
 
+// --- dsh browser half ------------------------------------------------------
+// The page half polls the keyboard host; here the poll and the clock are fakes.
+let tick;
+const realSetInterval = globalThis.setInterval;
+const realFetch = globalThis.fetch;
+globalThis.setInterval = (fn) => {
+  tick = fn;
+  return 0;
+};
+let answer = { seq: 1, session: null };
+globalThis.fetch = async () => ({ json: async () => answer });
+
+const dshClient = await import(pathToFileURL(path.join(root, "plugins/deepseek/plugin/client.js")).href);
+const opened = [];
+dshClient.apply({
+  uiWorkspace: { openSession: (id) => opened.push(id) },
+  effect: (fn) => fn(),
+});
+await tick(); // the first answer only says where the sequence stands
+answer = { seq: 2, session: "dsh-9" };
+await tick(); // a new tap: the page should follow it
+const afterTap = opened.at(-1);
+answer = { seq: 3, session: null };
+await tick(); // a tap that belongs to no session opens nothing
+
+globalThis.setInterval = realSetInterval;
+globalThis.fetch = realFetch;
+
+if (afterTap !== "dsh-9") {
+  console.log("FAIL dsh page did not follow the tap: " + JSON.stringify(opened));
+  failures += 1;
+} else if (opened.at(-1) !== "dsh-9") {
+  console.log("FAIL dsh page opened something for a sessionless tap: " + JSON.stringify(opened));
+  failures += 1;
+} else {
+  console.log("ok   dsh browser half follows an agent-key tap");
+}
+
 server.close();
 if (failures) {
   console.error(`\n${failures} harness adapter check(s) failed`);

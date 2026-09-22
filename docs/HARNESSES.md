@@ -137,9 +137,11 @@ compaction rebuilds the agent under the same session id.
 Delegated subagents are filtered out - their session header carries
 `origin: 'subagent'` or a `delegationDepth`, and those runs never take one of
 the six keys. Tapping a key brings that session's window forward; for `dsh` that
-is the browser window it was typed in. Jumping to one *particular* conversation
-is not something the page allows from outside: the launch token is accepted on
-`/` only and the UI has no per-session deep link or switch shortcut.
+is the browser window it was typed in, and the plugin's browser half then jumps
+the page to the conversation itself - it polls the host's `GET /activation` and
+calls `uiWorkspace.openSession`. The poll is the only route in: `dsh` has no
+per-session URL (its launch token is accepted on `/` only) and no switch
+shortcut.
 
 There is nothing to bind on the keyboard side: approval and stop are plain
 buttons in the Web UI with no key tokens.

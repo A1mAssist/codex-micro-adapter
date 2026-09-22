@@ -231,6 +231,8 @@ fn host_loop(
         config.brightness_percent,
         config.lighting(),
     );
+    // the control port answers `activation` polls from this slot
+    host.share_activation(queue.activation());
 
     // Agent keys follow whatever the plugins push; "off" mutes them.
     let mut agent_keys = config.harness != "off";
