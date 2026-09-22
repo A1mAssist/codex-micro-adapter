@@ -15,7 +15,7 @@ nothing is sent anywhere else.
 ## Install
 
 ```bash
-claude plugin marketplace add <path-or-url-of-this-repository>
+claude plugin marketplace add A1mAssist/codex-micro-harness
 claude plugin install codex-micro@codex-micro-harness
 ```
 

@@ -300,19 +300,14 @@ function renderChassis() {
   if (separate) {
     chassis.append(keycapCell("ACT10"), keycapCell("ACT11"));
   } else {
-    chassis.append(keycapCell("ACT10_ACT11", { merged: true }), keycapCell("hidden"));
+    // one wide key across the two switches, exactly like the device
+    chassis.append(keycapCell("ACT10_ACT11", { merged: true }));
   }
   chassis.append(keycapCell("ACT12"));
 }
 
 function keycapCell(slotId, { merged = false } = {}) {
   const layout = app.config?.layout || { slots: {} };
-  if (slotId === "hidden") {
-    const spacer = document.createElement("div");
-    spacer.className = "cell";
-    spacer.hidden = true;
-    return spacer;
-  }
   const slot = layout.slots?.[slotId] || { keycapId: "" };
   const cap = keycap(slot.keycapId || "EMPT1");
   const cell = document.createElement("button");

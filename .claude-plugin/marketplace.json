@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "codex-micro-harness",
+  "description": "Harness plugins for the Work Louder Codex Micro host",
+  "owner": {
+    "name": "A1mAssist"
+  },
+  "plugins": [
+    {
+      "name": "codex-micro",
+      "description": "Lights the Work Louder Codex Micro agent keys from Claude Code hook events.",
+      "author": {
+        "name": "A1mAssist"
+      },
+      "category": "productivity",
+      "source": "./plugins/claude-code"
+    }
+  ]
+}

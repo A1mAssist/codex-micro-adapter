@@ -97,8 +97,18 @@ codex-micro-backend send "fleet error"               # whole ring, ignores per-k
 ```
 
 States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
-`awaiting-response`, `error`. See [`plugins/claude-code`](plugins/claude-code)
-for a working example that maps Claude Code hook events onto them.
+`awaiting-response`, `error`.
+
+For Claude Code, the bundled plugin does this for you:
+
+```bash
+claude plugin marketplace add A1mAssist/codex-micro-harness
+claude plugin install codex-micro@codex-micro-harness
+```
+
+Session start, prompt submit, tool use, Stop, Notification and session end then
+light agent key 1 (set `CODEX_MICRO_AGENT=0..5` per shell to spread sessions
+across all six). See [`plugins/claude-code`](plugins/claude-code).
 
 ## Deliberate differences
 
