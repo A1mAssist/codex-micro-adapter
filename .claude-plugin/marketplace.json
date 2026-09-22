@@ -13,7 +13,7 @@
         "name": "A1mAssist"
       },
       "category": "productivity",
-      "source": "./plugins/claude-code"
+      "source": "./plugins/codex-micro"
     }
   ]
 }

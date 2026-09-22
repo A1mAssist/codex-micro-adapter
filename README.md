@@ -12,7 +12,7 @@ the settings page that configures all of it.
 ```
 desktop/           Tauri app: settings surface + embedded host
 backend/           Rust: HID framing, JSON-RPC, layout, lighting, actions
-plugins/claude-code/   Claude Code plugin that reports session state
+plugins/codex-micro/   Claude Code + Codex CLI plugin that reports session state
 docs/PROTOCOL.md   the wire protocol, as reverse-engineered
 ```
 
@@ -109,18 +109,25 @@ then the waiting/working states, oldest first inside each. A manual
 States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 `awaiting-response`, `error`.
 
-For Claude Code, the bundled plugin does this for you:
+The bundled plugin does this for both Claude Code and Codex CLI:
 
 ```bash
 claude plugin marketplace add A1mAssist/codex-micro-adapter
 claude plugin install codex-micro@codex-micro-adapter
+
+codex plugin marketplace add A1mAssist/codex-micro-adapter
+codex plugin add codex-micro@codex-micro-adapter
 ```
 
 Session start, prompt submit, tool use, Stop, Notification and session end then
-light that session's own agent key: the hook forwards Claude Code's `session_id`
-and the host hands out a free key, so six terminals need no per-shell setup at
-all (`CODEX_MICRO_AGENT=0..5` still pins one when you want it). See
-[`plugins/claude-code`](plugins/claude-code).
+light that session's own agent key: the hook forwards the session id and the
+host hands out a free key, so six terminals need no per-shell setup at all
+(`CODEX_MICRO_AGENT=0..5` still pins one when you want it). Codex CLI uses the
+same script with its own manifest and hook file — its first run asks you to
+trust the hooks, and an untrusted hook runs sandboxed and never reaches the
+host. See [`plugins/codex-micro`](plugins/codex-micro) for both, and
+[`docs/HARNESSES.md`](docs/HARNESSES.md) for Qwen Code, Gemini CLI, Goose,
+opencode and the harnesses that only get keystrokes.
 
 ## Deliberate differences
 

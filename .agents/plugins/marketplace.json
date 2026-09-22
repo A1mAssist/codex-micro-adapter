@@ -1,0 +1,20 @@
+{
+  "name": "codex-micro-adapter",
+  "interface": {
+    "displayName": "Codex Micro Adapter"
+  },
+  "plugins": [
+    {
+      "name": "codex-micro",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-micro"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

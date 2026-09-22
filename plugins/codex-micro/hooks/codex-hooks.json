@@ -1,0 +1,26 @@
+{
+  "description": "Report this Codex CLI session's state to the Codex Micro host, so one of its agent keys follows the session.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "Interrupt": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node \"${PLUGIN_ROOT}/hooks/report.mjs\"", "timeout": 3 }] }
+    ]
+  }
+}

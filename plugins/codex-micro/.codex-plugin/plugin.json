@@ -1,0 +1,6 @@
+{
+  "name": "codex-micro",
+  "version": "0.3.0",
+  "description": "Lights the Work Louder Codex Micro agent keys from Codex CLI hook events.",
+  "hooks": "./hooks/codex-hooks.json"
+}
