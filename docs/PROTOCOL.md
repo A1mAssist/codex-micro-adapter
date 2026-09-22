@@ -40,7 +40,9 @@ parse is not an error — the remainder is simply still in flight.
   parser accepts both spellings.
 * Every non-ASCII character in the request is escaped to `\uXXXX` before framing.
 * One request is in flight at a time, with a **50 ms** cooldown between calls.
-  The transport times out after **10 s**; the service layer wraps that in **15 s**.
+  The transport times out after **10 s**. The vendor's service layer wraps that
+  in a **15 s** guard of its own (`L`), which only matters inside the app: this
+  host drops the link and reconnects after the 10 s timeout instead.
 
 The host answers these methods:
 
@@ -126,6 +128,14 @@ The knob (`layout.encoderMode`) is one of:
 | `reasoning` | `ArrowUp` → `composer.decreaseReasoningEffort`, `ArrowDown` → `composer.increaseReasoningEffort` | app-internal | open settings |
 | `conversation-scroll` | plain up/down arrows | jump to latest | open settings |
 | `custom` | `layout.encoder.right` / `.left` | `layout.encoder.click` | `layout.encoder.longPress` |
+
+The app's own "app-internal" cells act on its UI (the highlighted composer
+control, the reasoning slider, the open thread). A standalone host has none of
+that, so those land on bindings: a click becomes `encoder:click`, and
+press-and-hold — which the app answers by opening its settings page — becomes the
+`settings` command. A hold is **500 ms**, the app's own threshold (`wn` in
+`codex-micro-bridge`). `custom` mode reads `layout.encoder.click` /
+`.longPress` directly, exactly like the app.
 
 ## Deliberately not used
 

@@ -98,12 +98,17 @@ fn lookup_key(trigger: &Trigger) -> Option<String> {
         Trigger::Act(Action::ComposerText { .. }) | Trigger::Act(Action::ExternalUrl { .. }) => {
             None
         }
-        Trigger::Act(action) | Trigger::Stick(action) | Trigger::EncoderTick(action) => {
-            Some(action_key(action))
-        }
+        Trigger::Act(action)
+        | Trigger::Stick(action)
+        | Trigger::EncoderTick(action)
+        | Trigger::EncoderClick(Some(action))
+        | Trigger::EncoderLongPress(Some(action)) => Some(action_key(action)),
         Trigger::PushToTalk { .. } => Some("ptt".to_string()),
         Trigger::EncoderPress => Some("encoder:press".to_string()),
         Trigger::EncoderRelease => Some("encoder:release".to_string()),
+        // the knob gestures the layout did not bind: a harness can bind these
+        Trigger::EncoderClick(None) => Some("encoder:click".to_string()),
+        Trigger::EncoderLongPress(None) => Some("encoder:longPress".to_string()),
         Trigger::Scroll(-1) => Some("encoder:up".to_string()),
         Trigger::Scroll(_) => Some("encoder:down".to_string()),
     }
@@ -201,13 +206,17 @@ pub fn virtual_key(name: &str) -> Option<u16> {
 pub fn dispatch(trigger: &Trigger, bindings: &Bindings, performer: &mut dyn Performer) -> Outcome {
     // payload-carrying actions are already fully specified by the layout
     match trigger {
-        Trigger::Act(Action::ComposerText { text, .. }) => {
+        Trigger::Act(Action::ComposerText { text, .. })
+        | Trigger::EncoderClick(Some(Action::ComposerText { text, .. }))
+        | Trigger::EncoderLongPress(Some(Action::ComposerText { text, .. })) => {
             let label = format!("type:{text}");
             return performer
                 .type_text(text)
                 .map_or_else(Outcome::Failed, |_| Outcome::Sent(label));
         }
-        Trigger::Act(Action::ExternalUrl { url, .. }) => {
+        Trigger::Act(Action::ExternalUrl { url, .. })
+        | Trigger::EncoderClick(Some(Action::ExternalUrl { url, .. }))
+        | Trigger::EncoderLongPress(Some(Action::ExternalUrl { url, .. })) => {
             let label = format!("url:{url}");
             return performer
                 .open_url(url)
@@ -396,5 +405,54 @@ mod tests {
             Outcome::Sent("url:https://developers.openai.com".into())
         );
         assert_eq!(performer.urls, vec!["https://developers.openai.com"]);
+    }
+
+    #[test]
+    fn knob_gestures_fall_back_to_their_own_binding_keys() {
+        let mut performer = Recording::default();
+        let mut bindings = Bindings::default();
+        bindings.set("encoder:click", "ctrl+enter");
+        bindings.set("encoder:longPress", "type:hold");
+        assert_eq!(
+            dispatch(&Trigger::EncoderClick(None), &bindings, &mut performer),
+            Outcome::Sent("ctrl+enter".into())
+        );
+        assert_eq!(
+            dispatch(&Trigger::EncoderLongPress(None), &bindings, &mut performer),
+            Outcome::Sent("type:hold".into())
+        );
+        assert_eq!(performer.texts, vec!["hold"]);
+        // unbound, they are reported like every other action
+        assert_eq!(
+            dispatch(&Trigger::EncoderClick(None), &Bindings::default(), &mut performer),
+            Outcome::Unbound("encoder:click".into())
+        );
+    }
+
+    #[test]
+    fn a_gesture_the_layout_bound_runs_that_action() {
+        let mut performer = Recording::default();
+        let mut bindings = Bindings::default();
+        bindings.set("git.commit", "ctrl+enter");
+        assert_eq!(
+            dispatch(
+                &Trigger::EncoderClick(Some(Action::Command("git.commit".into()))),
+                &bindings,
+                &mut performer,
+            ),
+            Outcome::Sent("ctrl+enter".into())
+        );
+        // and one that carries its own payload needs no binding at all
+        assert_eq!(
+            dispatch(
+                &Trigger::EncoderLongPress(Some(Action::ComposerText {
+                    label: "Write :yolo:".into(),
+                    text: ":yolo:".into(),
+                })),
+                &Bindings::default(),
+                &mut performer,
+            ),
+            Outcome::Sent("type::yolo:".into())
+        );
     }
 }

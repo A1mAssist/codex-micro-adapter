@@ -151,15 +151,17 @@ fn run(live: bool) {
     );
 
     loop {
-        for command in queue.drain() {
-            println!("[ctl] {}", host.apply(command));
+        for job in queue.drain() {
+            println!("[ctl] {}", job.run(|command| host.apply(command)));
         }
-        let candidate = if host.device.is_connected() {
-            None
-        } else {
+        let now = Instant::now();
+        // only enumerate the USB tree when the host would actually use the answer
+        let candidate = if host.scan_due(now) {
             codex_micro_backend::hid_windows::scan()
+        } else {
+            None
         };
-        for event in host.pump(Instant::now(), POLL_TIMEOUT, candidate) {
+        for event in host.pump(now, POLL_TIMEOUT, candidate) {
             println!("[evt] {}", event.describe());
         }
         if !host.device.is_connected() {

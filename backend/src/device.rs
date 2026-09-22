@@ -31,16 +31,6 @@ pub const RECONNECT_DELAYS: [Duration; 4] = [
     Duration::from_secs(5),
     Duration::from_secs(10),
 ];
-/// `P` — HID topology settle retry.
-pub const TOPOLOGY_SETTLE_DELAYS: [Duration; 3] = [
-    Duration::from_millis(250),
-    Duration::from_secs(1),
-    Duration::from_secs(3),
-];
-/// `L` — service-level RPC timeout.
-pub const SERVICE_RPC_TIMEOUT: Duration = Duration::from_secs(15);
-/// `R` — how long `stop()` waits for in-flight device RPCs.
-pub const STOP_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often we re-read `device.status` while connected.
 pub const BATTERY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -202,6 +192,11 @@ impl<O: Opener> Device<O> {
         self.state.status == Status::Connected
     }
 
+    /// The layout the host resolves key events through.
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     pub fn set_layout(&mut self, layout: Layout) {
         self.layout = layout;
     }
@@ -344,6 +339,11 @@ impl<O: Opener> Device<O> {
 
     /// Drain device notifications and turn input into layout triggers.
     pub fn poll(&mut self, timeout: Duration) -> Vec<Event> {
+        // unplugged: the reader thread stopped, so polling would just time out
+        // forever and the UI would keep showing the last battery reading
+        if self.client.as_ref().is_some_and(|c| c.is_closed()) {
+            return self.fail(RpcError::Transport("device removed".into()));
+        }
         let Some(client) = self.client.as_mut() else {
             return Vec::new();
         };
@@ -552,6 +552,7 @@ mod tests {
     use super::*;
     use crate::framing::{encode, CHANNEL_RPC, REPORT_LEN};
     use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     struct MockHid {
@@ -559,6 +560,8 @@ mod tests {
         written: Arc<Mutex<Vec<String>>>,
         /// reassembling buffer: a short report marks the end of a message
         pending: String,
+        /// what the real transport flips when the reader thread stops
+        closed: Arc<AtomicBool>,
     }
 
     impl Hid for MockHid {
@@ -575,11 +578,15 @@ mod tests {
         fn read_report(&mut self, _timeout: Duration) -> Option<[u8; REPORT_LEN]> {
             self.incoming.lock().unwrap().pop_front()
         }
+        fn is_closed(&self) -> bool {
+            self.closed.load(Ordering::SeqCst)
+        }
     }
 
     struct MockOpener {
         incoming: Arc<Mutex<VecDeque<[u8; REPORT_LEN]>>>,
         written: Arc<Mutex<Vec<String>>>,
+        closed: Arc<AtomicBool>,
         fail: bool,
     }
 
@@ -593,6 +600,7 @@ mod tests {
                 incoming: self.incoming.clone(),
                 written: self.written.clone(),
                 pending: String::new(),
+                closed: self.closed.clone(),
             })
         }
     }
@@ -600,6 +608,7 @@ mod tests {
     struct Rig {
         device: Device<MockOpener>,
         written: Arc<Mutex<Vec<String>>>,
+        closed: Arc<AtomicBool>,
     }
 
     impl Rig {
@@ -633,14 +642,17 @@ mod tests {
             .collect();
         let incoming = Arc::new(Mutex::new(incoming));
         let written = Arc::new(Mutex::new(Vec::new()));
+        let closed = Arc::new(AtomicBool::new(false));
         let opener = MockOpener {
             incoming,
             written: written.clone(),
+            closed: closed.clone(),
             fail: false,
         };
         Rig {
             device: Device::new(opener, layout, LightingModel::default()),
             written,
+            closed,
         }
     }
 
@@ -648,6 +660,7 @@ mod tests {
         let opener = MockOpener {
             incoming: Arc::new(Mutex::new(VecDeque::new())),
             written: Arc::new(Mutex::new(Vec::new())),
+            closed: Arc::new(AtomicBool::new(false)),
             fail: true,
         };
         Device::new(opener, Layout::default(), LightingModel::default())
@@ -684,6 +697,24 @@ mod tests {
         assert!(events.contains(&Event::Connected));
         assert_eq!(r.device.state().transport, Some(Transport::Usb));
         assert_eq!(r.device.state().firmware.as_deref(), Some("0.1.37"));
+    }
+
+    #[test]
+    fn an_unplugged_transport_tears_the_session_down() {
+        let mut r = rig(
+            &["{\"result\":{\"version\":\"0.1.37\"},\"id\":1}\n"],
+            Layout::default(),
+        );
+        r.device.connect(Instant::now(), Some(candidate()));
+        assert!(r.device.is_connected());
+
+        // the reader thread sets this the moment ReadFile stops answering, so the
+        // host learns about the unplug instead of timing out over the next minute
+        r.closed.store(true, Ordering::SeqCst);
+        let events = r.device.poll(Duration::ZERO);
+        assert_eq!(events[0], Event::Disconnected);
+        assert!(!r.device.is_connected(), "and it reconnects on the next scan");
+        assert_eq!(r.device.state().status, Status::Error);
     }
 
     #[test]

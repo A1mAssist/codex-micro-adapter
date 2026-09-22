@@ -43,6 +43,11 @@ pub trait Hid {
     fn write_report(&mut self, report: &[u8; framing::REPORT_LEN]) -> std::io::Result<()>;
     /// Block until one report arrives, or `timeout` elapses.
     fn read_report(&mut self, timeout: Duration) -> Option<[u8; framing::REPORT_LEN]>;
+    /// The transport is gone (unplugged): no report will ever arrive again.
+    /// Mocks and in-memory transports are never closed.
+    fn is_closed(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +83,11 @@ impl<H: Hid> RpcClient<H> {
     /// Notifications collected while waiting for responses.
     pub fn drain_notifications(&mut self) -> Vec<Notification> {
         std::mem::take(&mut self.notifications)
+    }
+
+    /// The device went away under us.
+    pub fn is_closed(&self) -> bool {
+        self.hid.is_closed()
     }
 
     fn alloc_id(&mut self) -> u16 {

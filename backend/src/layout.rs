@@ -451,12 +451,29 @@ pub enum Trigger {
     },
     EncoderPress,
     EncoderRelease,
+    /// Encoder click: the action the layout binds to `click`, or `None` in the
+    /// built-in modes, where the surrounding app decides what a click means.
+    EncoderClick(Option<Action>),
+    /// Encoder press-and-hold: the action the layout binds to `longPress`, or
+    /// `None` in the built-in modes, where the app opens its settings page.
+    EncoderLongPress(Option<Action>),
     /// Encoder tick in conversation-scroll mode: `-1` up, `+1` down.
     Scroll(i8),
     /// Encoder tick in custom mode.
     EncoderTick(Action),
     /// Analog stick pushed in a configured direction.
     Stick(Action),
+}
+
+/// The action the app's own `encoder` map binds to a knob gesture.
+///
+/// Only `custom` mode reads that map — every other mode has built-in behaviour
+/// (see `docs/PROTOCOL.md`) — so this is `None` for them.
+pub fn encoder_action(layout: &Layout, gesture: &str) -> Option<Action> {
+    if layout.encoder_mode != EncoderMode::Custom {
+        return None;
+    }
+    layout.encoder.get(gesture).cloned()
 }
 
 /// Resolve a key/encoder event. Port of the bridge's `wt` + `Tt` + `Ot`.
@@ -471,11 +488,7 @@ pub fn resolve_event(event: &HidEvent, layout: &Layout) -> Option<Trigger> {
         return match layout.encoder_mode {
             EncoderMode::Custom => {
                 let gesture = if key == "ENC_CW" { "right" } else { "left" };
-                layout
-                    .encoder
-                    .get(gesture)
-                    .cloned()
-                    .map(Trigger::EncoderTick)
+                encoder_action(layout, gesture).map(Trigger::EncoderTick)
             }
             // `conversation-scroll` sends plain arrows; `composer-navigation`
             // only exists inside the app and has no meaning out here.

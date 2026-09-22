@@ -250,20 +250,25 @@ fn host_loop(
                 UiMessage::Live(on) => host.set_performer(performer(on)),
             }
         }
-        for command in queue.drain() {
-            if !agent_keys && matches!(command, Command::Agent { .. }) {
-                println!("[ctl] ignored (agent keys off)");
-                continue;
-            }
-            let reply = host.apply(command);
+        for job in queue.drain() {
+            let reply = job.run(|command| {
+                // "off" mutes the agent keys: answer the caller rather than
+                // leaving it waiting for a reply that never comes
+                if !agent_keys && matches!(&command, Command::Agent { .. }) {
+                    return "err: agent keys are off".to_string();
+                }
+                host.apply(command)
+            });
             println!("[ctl] {reply}");
         }
-        let candidate = if host.device.is_connected() {
-            None
-        } else {
+        let now = Instant::now();
+        // only enumerate the USB tree when the host would actually use the answer
+        let candidate = if host.scan_due(now) {
             codex_micro_backend::hid_windows::scan()
+        } else {
+            None
         };
-        host.pump(Instant::now(), POLL_TIMEOUT, candidate);
+        host.pump(now, POLL_TIMEOUT, candidate);
         *snapshot.lock().unwrap() = host.snapshot();
         if !host.device.is_connected() {
             std::thread::sleep(Duration::from_millis(200));

@@ -59,8 +59,8 @@ cargo run -p codex-micro-backend -- list          # enumerate HID interfaces
 Dry run is the default everywhere: nothing reaches another window until you
 enable **Send keystrokes** in the app or pass `--live` on the console.
 
-Tests: `cargo test` (55 tests covering framing, RPC, layout, lighting, actions,
-the device state machine and the control protocol).
+Tests: `cargo test` — framing, RPC, layout, lighting, actions, the knob's
+click/hold gestures, the device state machine and the control protocol.
 
 ## Pointing it at another harness
 
@@ -122,8 +122,11 @@ Ported from the app, minus the parts that only make sense inside it:
   like every other action.
 - **Single-tap focus**, **Remove connection**, and the macOS **Input Monitoring**
   row have no equivalent in a standalone host.
-- The knob's **click** and **press-and-hold** gestures are not part of the
-  layout map yet; bind `encoder:press` / `encoder:release` instead.
+- The knob's **click** and **press-and-hold** follow the app's own table: in
+  `custom` mode they fire `layout.encoder.click` / `.longPress`, a hold in the
+  built-in modes resolves to the `settings` command, and a click there is left to
+  the `encoder:click` binding. `encoder:press` / `encoder:release` remain the raw
+  press events for anything that wants them.
 - Keyboard remapping is Windows-only for now (`SendInput` + SetupAPI HID);
   everything else is platform-neutral Rust.
 

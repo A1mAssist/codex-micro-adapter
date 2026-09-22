@@ -56,9 +56,18 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-fn from_wide(buf: &[u16]) -> String {
-    let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..end])
+/// The interface path is a flexible array member: windows-sys declares it as
+/// `[u16; 1]`, so reading `detail.DevicePath` yields one character (`\`) and
+/// every `CreateFileW` on the result fails. Read the UTF-16 path out of the raw
+/// buffer instead, at the offset `repr(C)` gives the field.
+fn device_path(buf: &[u8]) -> String {
+    let start = std::mem::offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
+    let units: Vec<u16> = buf[start..]
+        .chunks_exact(2)
+        .map(|pair| u16::from_ne_bytes([pair[0], pair[1]]))
+        .take_while(|unit| *unit != 0)
+        .collect();
+    String::from_utf16_lossy(&units)
 }
 
 /// Enumerate Work Louder HID interfaces.
@@ -120,7 +129,7 @@ pub fn enumerate_scanned() -> (usize, Vec<HidDeviceInfo>) {
                 continue;
             }
             scanned += 1;
-            let path = from_wide(&(*detail).DevicePath);
+            let path = device_path(&buf);
             if let Some(info) = describe(&path) {
                 out.push(info);
             }
@@ -215,33 +224,44 @@ impl SendHandle {
 pub struct WindowsHid {
     handle: SendHandle,
     rx: Receiver<[u8; REPORT_LEN]>,
+    /// Set the moment the reader thread stops, so the host can tell "the device
+    /// went away" apart from "nothing has arrived yet" without waiting for an
+    /// RPC timeout.
+    closed: Closed,
 }
 
-fn spawn_reader(handle: HANDLE) -> io::Result<Receiver<[u8; REPORT_LEN]>> {
+type Closed = std::sync::Arc<std::sync::atomic::AtomicBool>;
+
+fn spawn_reader(handle: HANDLE) -> io::Result<(Receiver<[u8; REPORT_LEN]>, Closed)> {
     let (tx, rx): (Sender<[u8; REPORT_LEN]>, Receiver<[u8; REPORT_LEN]>) = mpsc::channel();
+    let closed: Closed = Closed::default();
+    let flag = closed.clone();
     let owned = SendHandle(handle);
     std::thread::Builder::new()
         .name("wl-hid-read".into())
-        .spawn(move || loop {
-            let mut buf = [0u8; REPORT_LEN];
-            let mut read = 0u32;
-            let ok = unsafe {
-                ReadFile(
-                    owned.raw(),
-                    buf.as_mut_ptr(),
-                    REPORT_LEN as u32,
-                    &mut read,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 || read == 0 {
-                break;
+        .spawn(move || {
+            loop {
+                let mut buf = [0u8; REPORT_LEN];
+                let mut read = 0u32;
+                let ok = unsafe {
+                    ReadFile(
+                        owned.raw(),
+                        buf.as_mut_ptr(),
+                        REPORT_LEN as u32,
+                        &mut read,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if ok == 0 || read == 0 {
+                    break;
+                }
+                if tx.send(buf).is_err() {
+                    break;
+                }
             }
-            if tx.send(buf).is_err() {
-                break;
-            }
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
         })?;
-    Ok(rx)
+    Ok((rx, closed))
 }
 
 impl WindowsHid {
@@ -260,10 +280,11 @@ impl WindowsHid {
             if handle == INVALID_HANDLE_VALUE {
                 return Err(io::Error::last_os_error());
             }
-            let rx = spawn_reader(handle)?;
+            let (rx, closed) = spawn_reader(handle)?;
             Ok(Self {
                 handle: SendHandle(handle),
                 rx,
+                closed,
             })
         }
     }
@@ -271,6 +292,8 @@ impl WindowsHid {
 
 impl Drop for WindowsHid {
     fn drop(&mut self) {
+        self.closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         unsafe { CloseHandle(self.handle.0) };
     }
 }
@@ -296,6 +319,10 @@ impl HidIo for WindowsHid {
     fn read_report(&mut self, timeout: Duration) -> Option<[u8; REPORT_LEN]> {
         self.rx.recv_timeout(timeout).ok()
     }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 /// The opener both front ends use.
@@ -315,4 +342,33 @@ pub fn scan() -> Option<crate::device::Candidate> {
         path: info.path,
         is_usb: info.is_usb,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `SP_DEVICE_INTERFACE_DETAIL_DATA_W::DevicePath` is a flexible array member
+    /// that windows-sys declares as `[u16; 1]`. Reading that field gives back one
+    /// character, which is what silently broke every `CreateFileW` before; the
+    /// path has to come out of the raw buffer at the field's offset.
+    #[test]
+    fn reads_the_whole_interface_path_out_of_the_detail_buffer() {
+        const PATH: &str = r"\\?\hid#vid_303a&pid_8360#7&2f4d1a1c&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        let start = std::mem::offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
+        let bytes = start + 2 * (PATH.len() + 1);
+        // 8-byte aligned, so the struct view below is a real one like SetupAPI's
+        let mut words = vec![0u64; bytes.div_ceil(8)];
+        let buf =
+            unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), words.len() * 8) };
+        buf[..4].copy_from_slice(&(size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() as u32).to_ne_bytes());
+        for (i, unit) in PATH.encode_utf16().chain(std::iter::once(0)).enumerate() {
+            let at = start + i * 2;
+            buf[at..at + 2].copy_from_slice(&unit.to_ne_bytes());
+        }
+        assert_eq!(device_path(&buf[..bytes]), PATH);
+        // reading the declared field instead is the trap: one unit, not the path
+        let detail = unsafe { &*words.as_ptr().cast::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() };
+        assert_eq!(String::from_utf16_lossy(&detail.DevicePath), "\\");
+    }
 }
