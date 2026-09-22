@@ -1,5 +1,7 @@
 # Codex Micro Adapter
 
+English | [中文](README.zh-CN.md)
+
 Use the Work Louder **Codex Micro** keyboard with any coding agent - Claude Code,
 the Codex CLI, pi, opencode, DeepSeek Harness, or anything else that runs in a
 window.
