@@ -13,9 +13,9 @@ Five harnesses are supported, each in two directions:
 | --- | --- | --- | --- |
 | Claude Code | `plugins/codex-micro` (plugin) | 8 hooks | runtime: a real session lit the keys |
 | Codex CLI | `plugins/codex-micro` (same plugin, Codex manifest) | 7 hooks | runtime: a real session lit the keys |
-| pi | `plugins/pi/codex-micro.ts` | extension events | `scripts/check-harness-adapters.mjs` |
-| opencode | `plugins/opencode/codex-micro.ts` | plugin event bus | `scripts/check-harness-adapters.mjs` |
-| DeepSeek Harness (`dsh`) | `plugins/deepseek/` | hooks bridge | checked against the official source |
+| pi | `plugins/pi/codex-micro.ts` | extension events | runtime: a real pi session lit the keys |
+| opencode | `plugins/opencode/codex-micro.ts` | plugin event bus | runtime: a real opencode session lit the keys |
+| DeepSeek Harness (`dsh`) | `plugins/deepseek/` | hooks bridge | installed, ACP session verified; hook events need a DeepSeek key |
 
 ## Claude Code
 

@@ -192,6 +192,19 @@ pub fn virtual_key(name: &str) -> Option<u16> {
             return match first {
                 'a'..='z' => Some(0x41 + (first as u16 - 'a' as u16)),
                 '0'..='9' => Some(0x30 + (first as u16 - '0' as u16)),
+                // the OEM keys harnesses actually use: Codex CLI reads reasoning
+                // effort from alt+, / alt+. and promises more of these later
+                ',' => Some(0xBC),
+                '-' => Some(0xBD),
+                '.' => Some(0xBE),
+                '/' => Some(0xBF),
+                ';' => Some(0xBA),
+                '=' => Some(0xBB),
+                '[' => Some(0xDB),
+                '\\' => Some(0xDC),
+                ']' => Some(0xDD),
+                '\'' => Some(0xDE),
+                '`' => Some(0xC0),
                 _ => None,
             };
         }
@@ -326,6 +339,23 @@ mod tests {
             panic!("no combo")
         };
         assert_eq!(combo.vk, 0x74);
+    }
+
+    #[test]
+    fn understands_the_oem_keys_harnesses_use() {
+        let Some(Step::Combo(combo)) = parse_binding("alt+.") else {
+            panic!("no combo")
+        };
+        assert!(combo.modifiers.alt);
+        assert_eq!(combo.vk, 0xBE, "VK_OEM_PERIOD");
+        let Some(Step::Combo(combo)) = parse_binding("alt+,") else {
+            panic!("no combo")
+        };
+        assert_eq!(combo.vk, 0xBC, "VK_OEM_COMMA");
+        assert!(
+            parse_binding("alt+,").is_some(),
+            "Codex CLI reads reasoning effort from alt+, / alt+."
+        );
     }
 
     #[test]

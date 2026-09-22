@@ -1,0 +1,10 @@
+{
+  "bindings": {
+    "composer.submit": "enter",
+    "approval.approve": "y",
+    "approval.decline": "d",
+    "composer.togglePlanMode": "shift+tab",
+    "composer.increaseReasoningEffort": "alt+.",
+    "composer.decreaseReasoningEffort": "alt+,"
+  }
+}
