@@ -248,12 +248,14 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .cell.agent.lit .agent-plate { background: var(--lit-color); border-color: rgba(255, 255, 255, 0.5); }
 
-/* status LEDs + body cell in the bottom row */
-.cell.led { gap: 4px; }
+/* status LEDs + body cell in the bottom row — mirrors the app's chassis cell:
+   [dot column][58% round body]. The dots must NOT be called `.led`: that class
+   is the cell itself, and the collision collapsed the whole cell to 5px. */
+.cell.led { gap: 7px; }
 .led-column { display: flex; flex-direction: column; gap: 3px; }
-.led { width: 5px; height: 5px; border-radius: 50%; background: #9ebdff; box-shadow: 0 0 6px rgba(158, 189, 255, 0.9); }
-.led.dim { background: #b8b98b; box-shadow: none; }
-.led-body { width: 66%; height: 66%; border-radius: 50%; background: #191a1e; }
+.led-dot { width: 7px; height: 7px; border-radius: 50%; background: #9ebdff; box-shadow: 0 0 5px rgba(158, 189, 255, 0.9); }
+.led-dot.dim { background: #b8b98b; box-shadow: none; }
+.led-body { width: 58%; height: 58%; border-radius: 50%; background: #202127; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.36); }
 
 /* ---------- dialogs ---------- */
 

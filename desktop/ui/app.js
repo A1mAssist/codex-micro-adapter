@@ -341,7 +341,7 @@ function ledCell() {
   cell.className = "cell led";
   cell.setAttribute("aria-hidden", "true");
   cell.innerHTML =
-    '<span class="led-column"><span class="led"></span><span class="led dim"></span><span class="led dim"></span></span>' +
+    '<span class="led-column"><span class="led-dot"></span><span class="led-dot dim"></span><span class="led-dot dim"></span></span>' +
     '<span class="led-body"></span>';
   return cell;
 }
