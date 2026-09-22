@@ -325,6 +325,63 @@ impl HidIo for WindowsHid {
     }
 }
 
+/// Read-only view of a device: no RGB, no RPC, no writes of any kind.
+///
+/// This is what the `listen` diagnostic opens, so it can answer "do reports
+/// arrive at all?" while whatever app is already driving the keyboard keeps
+/// driving it. HID input is broadcast to every open handle, so watching does not
+/// steal the device.
+pub struct ListenOnly {
+    handle: SendHandle,
+    rx: Receiver<[u8; REPORT_LEN]>,
+    closed: Closed,
+}
+
+impl ListenOnly {
+    pub fn open(path: &str) -> io::Result<Self> {
+        unsafe {
+            let wpath = wide(path);
+            // GENERIC_READ and nothing else: this handle cannot write even by mistake
+            let handle = CreateFileW(
+                wpath.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            let (rx, closed) = spawn_reader(handle)?;
+            Ok(Self {
+                handle: SendHandle(handle),
+                rx,
+                closed,
+            })
+        }
+    }
+
+    /// The next report, or `None` if nothing arrived within `timeout`.
+    pub fn next(&self, timeout: Duration) -> Option<[u8; REPORT_LEN]> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
+    /// The device went away (unplugged).
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for ListenOnly {
+    fn drop(&mut self) {
+        self.closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe { CloseHandle(self.handle.0) };
+    }
+}
+
 /// The opener both front ends use.
 pub struct Opener;
 

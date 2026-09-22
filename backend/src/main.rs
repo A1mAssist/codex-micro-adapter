@@ -33,6 +33,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("list") => list(),
+        Some("listen") => listen(&args[1..]),
         Some("run") => run(args.iter().any(|a| a == "--live")),
         Some("send") => send(&args[1..]),
         Some("config") => print_config(),
@@ -44,6 +45,7 @@ fn usage() {
     println!("usage: codex-micro-backend <command>");
     println!();
     println!("  list                       enumerate Work Louder HID interfaces");
+    println!("  listen [--seconds N]       watch what the keyboard sends, writing nothing");
     println!("  run [--live]               run the host; --live injects real keystrokes");
     println!("  send <control command...>  push state to a running host");
     println!("  config                     print the config path and the defaults");
@@ -108,6 +110,73 @@ fn list() {
 #[cfg(not(windows))]
 fn list() {
     println!("device discovery is Windows-only for now");
+}
+
+#[cfg(windows)]
+/// Watch what the keyboard sends, and write nothing back.
+///
+/// Opens the vendor collection read-only, so whichever app is already driving
+/// the keyboard keeps driving it. Answers one question: do reports arrive?
+#[cfg(windows)]
+fn listen(args: &[String]) {
+    let seconds: u64 = args
+        .iter()
+        .position(|a| a == "--seconds")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+
+    let Some(candidate) = codex_micro_backend::hid_windows::scan() else {
+        eprintln!("no Codex Micro on the vendor collection (usage page 0xFF00)");
+        std::process::exit(2);
+    };
+    println!("device: {}", candidate.path);
+    let device = match codex_micro_backend::hid_windows::ListenOnly::open(&candidate.path) {
+        Ok(device) => device,
+        Err(err) => {
+            eprintln!("opening read-only failed: {err}");
+            std::process::exit(2);
+        }
+    };
+    println!("watching for {seconds}s — read-only, no report is ever written");
+    println!("press keys, turn the knob, move the stick");
+
+    let mut lines = codex_micro_backend::framing::LineBuffers::default();
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(seconds);
+    let (mut reports, mut events) = (0usize, 0usize);
+    while Instant::now() < deadline {
+        let Some(report) = device.next(Duration::from_millis(250)) else {
+            if device.is_closed() {
+                eprintln!("device closed — unplugged?");
+                break;
+            }
+            continue;
+        };
+        reports += 1;
+        let at = start.elapsed().as_secs_f64();
+        let payload: Vec<String> = report[..(3 + report[2] as usize).min(report.len())]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        println!("[{at:6.3}s] {}", payload.join(" "));
+        for line in lines.push(&report) {
+            if line.contains("v.oai.") {
+                events += 1;
+            }
+            println!("          {line}");
+        }
+    }
+    println!("---");
+    println!("{reports} reports, {events} device events in {seconds}s");
+    if reports == 0 {
+        std::process::exit(2);
+    }
+}
+
+#[cfg(not(windows))]
+fn listen(_args: &[String]) {
+    println!("listening needs the Windows HID backend");
 }
 
 #[cfg(windows)]

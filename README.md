@@ -54,6 +54,7 @@ Console host (no window, useful for debugging):
 cargo run -p codex-micro-backend -- run           # dry run: actions are logged
 cargo run -p codex-micro-backend -- run --live    # inject real keystrokes
 cargo run -p codex-micro-backend -- list          # enumerate HID interfaces
+cargo run -p codex-micro-backend -- listen        # read-only: print what the keyboard sends
 ```
 
 Dry run is the default everywhere: nothing reaches another window until you
@@ -91,10 +92,19 @@ light the agent keys:
 ```bash
 codex-micro-backend send "agent 0 working"          # key 1 turns blue
 codex-micro-backend send "agent 1 awaiting-approval" # key 2 turns orange
+codex-micro-backend send "session 7f3a working"      # host picks a free key, remembers the owner
+codex-micro-backend send "session 7f3a end"          # gives the key back
 codex-micro-backend send "voice recording"           # ambient ring goes blue
 codex-micro-backend send "brightness 40"
 codex-micro-backend send "fleet error"               # whole ring, ignores per-key state
 ```
+
+`session <id> <status>` is what a harness plugin wants: it reports the session id
+it already has and the host answers with the agent key it took
+(`ok session 7f3a agent 3 working`). Keys are handed out lowest-first; when all
+six are taken, the dullest one changes hands — `off`, then idle, then unread,
+then the waiting/working states, oldest first inside each. A manual
+`agent <n> …` takes its key back from whichever session owned it.
 
 States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 `awaiting-response`, `error`.
@@ -107,8 +117,10 @@ claude plugin install codex-micro@codex-micro-adapter
 ```
 
 Session start, prompt submit, tool use, Stop, Notification and session end then
-light agent key 1 (set `CODEX_MICRO_AGENT=0..5` per shell to spread sessions
-across all six). See [`plugins/claude-code`](plugins/claude-code).
+light that session's own agent key: the hook forwards Claude Code's `session_id`
+and the host hands out a free key, so six terminals need no per-shell setup at
+all (`CODEX_MICRO_AGENT=0..5` still pins one when you want it). See
+[`plugins/claude-code`](plugins/claude-code).
 
 ## Deliberate differences
 
