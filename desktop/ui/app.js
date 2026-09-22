@@ -227,8 +227,9 @@ function renderDynamic() {
     const active = color && status !== "idle";
     cell.classList.toggle("lit", Boolean(active));
     cell.style.setProperty("--lit-color", color || "transparent");
-    plate.style.setProperty("--status-color", active ? "#f0efff" : color || "#6f63d9");
-    plate.style.setProperty("--status-opacity", status === "off" ? "0" : active ? "0.85" : "0.6");
+    // the app's unassigned/idle caps still show the violet centre dot
+    plate.style.setProperty("--status-color", active ? "#f0efff" : "#6f63d9");
+    plate.style.setProperty("--status-opacity", active ? "0.85" : "0.6");
     cell.title = `Agent key ${Number(cell.dataset.agent) + 1}: ${STATUS_LABELS[status] || status}`;
   }
 
