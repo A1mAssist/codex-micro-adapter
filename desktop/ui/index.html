@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Micro</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="product">
+        <span class="product-name" id="product-name">Codex Micro</span>
+        <span class="chip" id="connection-chip" data-status="not-detected">Not detected</span>
+      </div>
+      <label class="switch" title="Inject real keystrokes into the focused window">
+        <input type="checkbox" id="live-toggle" />
+        <span>Send keystrokes</span>
+      </label>
+    </header>
+
+    <main>
+      <section class="card">
+        <div class="row">
+          <div>
+            <div class="row-label">Connection</div>
+            <div class="row-note" id="connection-note">Looking for a Codex Micro over USB or Bluetooth.</div>
+          </div>
+          <div class="row-body"><button class="ghost" id="rescan">Rescan</button></div>
+        </div>
+        <div class="row" id="battery-row">
+          <div class="row-label">Battery</div>
+          <div class="row-body" id="battery">--</div>
+        </div>
+        <div class="row" id="firmware-row">
+          <div class="row-label">Firmware</div>
+          <div class="row-body" id="firmware">--</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Brightness</div>
+            <div class="row-note">Adjusts the brightness of all Codex Micro lighting</div>
+          </div>
+          <div class="row-body row-body-inline">
+            <input type="range" id="brightness" min="0" max="100" step="10" value="100" />
+            <output class="readout" id="brightness-readout">100%</output>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Auto-dim</div>
+            <div class="row-note">
+              Turns lighting off after inactivity and back on when you use Codex Micro or an agent key changes color or state
+            </div>
+          </div>
+          <div class="row-body"><select id="auto-off"></select></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Layout</h2>
+          <button class="ghost" id="reset-layout">Reset layout</button>
+        </div>
+        <div class="preview"><div class="chassis" id="chassis"></div></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Options</h2></div>
+        <div class="row">
+          <div>
+            <div class="row-label">Knob</div>
+            <div class="row-note" id="knob-note">Choose what turning the knob controls</div>
+          </div>
+          <div class="row-body"><select id="encoder-mode"></select></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Use separate microphone keys</div>
+            <div class="row-note">Map the two switches beneath the wide key separately</div>
+          </div>
+          <div class="row-body">
+            <label class="switch"><input type="checkbox" id="separate-mic" /><span></span></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>Harness</h2></div>
+        <div class="row">
+          <div>
+            <div class="row-label">Target client</div>
+            <div class="row-note">Which client the keys type into, and which plugin reports agent key state back</div>
+          </div>
+          <div class="row-body"><select id="harness"></select></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="row-label">Control socket</div>
+            <div class="row-note">Any client can push state here: <code>codex-micro-backend send "agent 0 working"</code></div>
+          </div>
+          <div class="row-body">
+            <code class="inline" id="control-port">127.0.0.1:27700</code>
+            <button class="ghost" id="copy-port">Copy</button>
+          </div>
+        </div>
+        <div class="hint" id="harness-hint"></div>
+        <div class="agent-keys" id="agent-keys"></div>
+        <details>
+          <summary>Activity</summary>
+          <pre id="log"></pre>
+        </details>
+      </section>
+    </main>
+
+    <dialog class="sheet" id="keycap-dialog">
+      <form method="dialog" id="keycap-form">
+        <header>
+          <h2>Edit keycap</h2>
+          <p id="keycap-subtitle"></p>
+        </header>
+        <div class="body">
+          <div class="search">
+            <input type="search" id="keycap-search" placeholder="Search keycaps" aria-label="Search keycaps" />
+          </div>
+          <div class="keycap-grid" id="keycap-grid" role="group" aria-label="Keycaps"></div>
+          <div class="row">
+            <div>
+              <div class="row-label">Assigned action</div>
+              <div class="row-note" id="keycap-action-note"></div>
+            </div>
+            <div class="row-body"><select id="keycap-action"></select></div>
+          </div>
+          <div class="row" id="keycap-text-row" hidden>
+            <div>
+              <div class="row-label">Text to insert</div>
+              <div class="row-note">Stored in your local Codex Micro settings</div>
+            </div>
+            <div class="row-body"><input type="text" id="keycap-text" placeholder="Enter text" /></div>
+          </div>
+        </div>
+        <footer>
+          <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+          <button value="save" class="primary" id="keycap-save">Save</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="sheet" id="mapping-dialog">
+      <form method="dialog" id="mapping-form">
+        <header>
+          <h2 id="mapping-title"></h2>
+          <p id="mapping-desc"></p>
+        </header>
+        <div class="body" id="mapping-rows"></div>
+        <footer><button value="done" class="primary">Done</button></footer>
+      </form>
+    </dialog>
+
+    <dialog class="sheet" id="confirm-dialog">
+      <form method="dialog" id="confirm-form">
+        <header>
+          <h2 id="confirm-title"></h2>
+          <p id="confirm-body"></p>
+        </header>
+        <footer>
+          <button value="cancel" class="ghost">Cancel</button>
+          <button value="confirm" class="danger" id="confirm-ok"></button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="app.js"></script>
+  </body>
+</html>

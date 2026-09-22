@@ -1,0 +1,8 @@
+{
+  "name": "codex-micro",
+  "version": "0.1.0",
+  "description": "Lights the Work Louder Codex Micro agent keys from Claude Code hook events.",
+  "author": {
+    "name": "A1mAssist"
+  }
+}
