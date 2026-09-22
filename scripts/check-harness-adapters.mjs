@@ -83,6 +83,51 @@ await expect("opencode session events", [
 await plugin.event({ event: { type: "message.updated", properties: { sessionID: "oc-1" } } });
 await expect("opencode ignores unmapped events", []);
 
+// --- dsh native Cordis plugin ----------------------------------------------
+const dsh = await import(pathToFileURL(path.join(root, "plugins/deepseek/plugin/index.js")).href);
+const seams = new Map();
+dsh.apply({ on: (event, handler) => seams.set(event, handler) }, {});
+
+/** Fire one seam and report whether the plugin handed the request on. */
+function seam(name, payload) {
+  const handler = seams.get(name);
+  if (!handler) {
+    console.log(`FAIL dsh registered no handler for ${name}`);
+    failures += 1;
+    return false;
+  }
+  let passed = false;
+  handler(payload, () => {
+    passed = true;
+  });
+  return passed;
+}
+
+const dshAgent = { session: { header: { id: "dsh-1" } } };
+const seamsCalled = [
+  seam("agent/created", { agent: dshAgent }),
+  seam("agent/pre-step", { agent: dshAgent, messages: [{}] }),
+  seam("tools/pre-execute", { agent: dshAgent }),
+  seam("approval/request", { agent: dshAgent }),
+  seam("agent/turn-stopping", { agent: dshAgent }),
+  seam("session/disposed", dshAgent.session),
+];
+
+await expect("dsh lifecycle seams", [
+  "session dsh-1 idle",
+  "session dsh-1 working",
+  "session dsh-1 working",
+  "session dsh-1 awaiting-approval",
+  "session dsh-1 unread",
+  "session dsh-1 end",
+]);
+
+// Waterfall seams must call next(): swallowing one stalls the harness.
+if (!seamsCalled.slice(1, 4).every(Boolean)) {
+  console.log("FAIL dsh dropped a waterfall request instead of calling next()");
+  failures += 1;
+}
+
 server.close();
 if (failures) {
   console.error(`\n${failures} harness adapter check(s) failed`);

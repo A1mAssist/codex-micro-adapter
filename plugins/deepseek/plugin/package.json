@@ -1,0 +1,14 @@
+{
+  "name": "codex-micro-dsh",
+  "version": "0.1.0",
+  "description": "Lights the Work Louder Codex Micro agent keys from DeepSeek Harness runs",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.3"
+  }
+}

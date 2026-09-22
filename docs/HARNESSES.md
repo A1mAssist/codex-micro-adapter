@@ -15,7 +15,7 @@ Five harnesses are supported, each in two directions:
 | Codex CLI | `plugins/codex-micro` (same plugin, Codex manifest) | 7 hooks | runtime: a real session lit the keys |
 | pi | `plugins/pi/codex-micro.ts` | extension events | runtime: a real pi session lit the keys |
 | opencode | `plugins/opencode/codex-micro.ts` | plugin event bus | runtime: a real opencode session lit the keys |
-| DeepSeek Harness (`dsh`) | `plugins/deepseek/` | hooks bridge | installed, ACP session verified; hook events need a DeepSeek key |
+| DeepSeek Harness (`dsh`) | `plugins/deepseek/plugin` (native Cordis plugin) | harness seams | runtime: a real ACP session lit the keys |
 
 ## Agent keys
 
@@ -113,22 +113,26 @@ bound, because opencode's approval dialog has no documented key tokens.
 
 ## DeepSeek Harness
 
-The official `dsh` (MIT, developer preview) has no TUI: it ships a Web UI, an
-ACP stdio server and a Codex-style hooks bridge. This adapter uses the hooks
-bridge - see [`plugins/deepseek/README.md`](../plugins/deepseek/README.md) for
-the plugin install, the `cordis.patch.yml` entry and the `<REPO>` placeholder
-that has to be filled in.
+The official `dsh` (MIT, developer preview) has no TUI: it ships a Web UI and an
+ACP stdio server. `dsh` also has a Codex-style hooks bridge, but that bridge
+drops `PermissionRequest` and has no `SessionEnd`, so two key states stay dark.
+This adapter is a **native Cordis plugin** instead, mounted through the profile's
+`cordis.patch.yml` - see
+[`plugins/deepseek/README.md`](../plugins/deepseek/README.md) for the mount and
+the `insert:` shape (`dsh` rejects a bare `- name:` entry: `patch: id is required
+for non-insert patches`).
 
-| `dsh` hook | Agent key |
+| `dsh` seam | Agent key |
 | --- | --- |
-| `SessionStart` | Idle |
-| `UserPromptSubmit` | Working |
-| `Stop` | Unread |
+| `agent/created` | Idle |
+| `agent/pre-step`, `tools/pre-execute` | Working |
+| `approval/request` | Awaiting approval |
+| `agent/turn-stopping` | Unread |
+| `session/disposed` | Off, key released |
 
-Two states are missing from that bridge: `PermissionRequest` is dropped, and
-there is no `SessionEnd`, so a key keeps showing "unread" until another session
-takes it. Both exist on `dsh`'s ACP surface (`session/request_permission`,
-`session/close`) if they are ever needed.
+`approval/request` is a waterfall: the plugin calls `next()` and never answers,
+so the harness's own answerer keeps its job. `agent/disposed` is not wired -
+compaction rebuilds the agent under the same session id.
 
 There is nothing to bind on the keyboard side: approval and stop are plain
 buttons in the Web UI with no key tokens.
@@ -136,7 +140,7 @@ buttons in the Web UI with no key tokens.
 ## Check an adapter
 
 ```powershell
-node scripts/check-harness-adapters.mjs   # pi + opencode, feeds them real events
+node scripts/check-harness-adapters.mjs   # pi, opencode and the dsh plugin, fed real events
 cargo test -p codex-micro-backend         # the host itself
 ```
 

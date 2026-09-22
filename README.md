@@ -15,7 +15,7 @@ backend/           Rust: HID framing, JSON-RPC, layout, lighting, actions
 plugins/codex-micro/   Claude Code + Codex CLI plugin that reports session state
 plugins/pi/            pi extension: harness events -> agent keys
 plugins/opencode/      opencode plugin: harness events -> agent keys
-plugins/deepseek/      DeepSeek Harness hooks-bridge config
+plugins/deepseek/      DeepSeek Harness native Cordis plugin
 presets/           per-harness binding maps for the Micro keys
 docs/PROTOCOL.md   the wire protocol, as reverse-engineered
 ```
