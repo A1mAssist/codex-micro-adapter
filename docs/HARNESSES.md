@@ -1,41 +1,42 @@
-# Other harnesses
+# Harnesses
 
-The host is harness-agnostic in both directions:
+Five harnesses are supported, each in two directions:
 
-- **Harness to keyboard.** A hook in the harness reports `session <id> <status>`
-  on the loopback socket, and the host hands that session one of the six agent
-  keys (see the control-socket section of the main README). Any language works;
-  the bundled `plugins/codex-micro/hooks/report.mjs` is a small Node script that
-  maps a hook payload to a status.
+- **Harness to keyboard.** A hook or plugin reports `session <id> <status>` on
+  the host's loopback socket, and the host gives that session one of the six
+  agent keys. See the control-socket section of the main README.
 - **Keyboard to harness.** Keys and stick resolve through `bindings` in
   `%APPDATA%\codex-micro\config.json` to real keystrokes, which land in whatever
-  window has focus. That needs no per-harness code at all, only a preset.
+  window has focus. Ready-made maps live in [`presets/`](../presets/README.md).
 
-Everything below was checked against each harness's own docs or source on
-2026-09-22; the two that are installed here were also run end to end.
-
-| Harness | Event surface | Session id | Ships as | State |
-| --- | --- | --- | --- | --- |
-| Claude Code | 9 hooks incl. SessionStart / Notification / Stop / SessionEnd | `session_id` | plugin in this repo | runtime-tested |
-| Codex CLI | 12 hooks incl. SessionStart / PermissionRequest / Stop / Interrupt | `session_id` | plugin in this repo | runtime-tested |
-| Qwen Code | 21 hooks incl. Stop / Notification / PermissionRequest | `session_id` | `~/.qwen/settings.json` | docs-checked |
-| Gemini CLI | 11 hooks incl. AfterAgent / Notification | `session_id` | `~/.gemini/settings.json` | docs-checked |
-| Goose | 11 hooks incl. Stop / SessionEnd | `session_id` | plugin directory | docs-checked |
-| Pi | extension events: session_start / input / agent_settled / ui_prompt_start | `ctx.sessionManager.getSessionId()` | `plugins/pi/codex-micro.ts` | docs-checked |
-| opencode | plugin bus: session.created / session.idle / permission.asked | `sessionID` | `plugins/opencode/codex-micro.ts` | docs-checked |
-| DeepSeek Harness (`dsh`) | hooks bridge: SessionStart / UserPromptSubmit / Stop | `session_id` | `plugins/deepseek/` | docs-checked |
-| Continue CLI | Claude-Code-compatible hooks | `session_id` | reuses the Claude Code plugin | docs-checked |
-| Crush | PreToolUse only | `session_id` | keystrokes only | docs-checked |
-| Aider | no hooks; notifications-command only | none | keystrokes only | docs-checked |
+| Harness | Ships as | Events used | Verified |
+| --- | --- | --- | --- |
+| Claude Code | `plugins/codex-micro` (plugin) | 8 hooks | runtime: a real session lit the keys |
+| Codex CLI | `plugins/codex-micro` (same plugin, Codex manifest) | 7 hooks | runtime: a real session lit the keys |
+| pi | `plugins/pi/codex-micro.ts` | extension events | `scripts/check-harness-adapters.mjs` |
+| opencode | `plugins/opencode/codex-micro.ts` | plugin event bus | `scripts/check-harness-adapters.mjs` |
+| DeepSeek Harness (`dsh`) | `plugins/deepseek/` | hooks bridge | checked against the official source |
 
 ## Claude Code
 
-```powershell
+```bash
 claude plugin marketplace add A1mAssist/codex-micro-adapter
 claude plugin install codex-micro@codex-micro-adapter
 ```
 
-Every hook forwards `session_id`; there is nothing else to configure.
+Session start, prompt submit, tool use, Stop, Notification, compaction and
+session end all forward `session_id`; nothing else to configure.
+
+| Hook | Agent key |
+| --- | --- |
+| `SessionStart` | Idle |
+| `UserPromptSubmit`, `PreToolUse`, `SubagentStop`, `PreCompact` | Working |
+| `Notification` (waiting for you) | Awaiting approval |
+| `Stop` | Unread |
+| `SessionEnd` | Off, key released |
+
+Preset: [`presets/claude-code.json`](../presets/claude-code.json) - `enter`
+confirms, `escape` declines, `shift+tab` cycles the permission mode.
 
 ## Codex CLI
 
@@ -45,125 +46,70 @@ codex plugin add codex-micro@codex-micro-adapter
 ```
 
 The first interactive `codex` run shows **Hooks need review** - choose
-*Trust all and continue*. Until you do, the keys stay dark: measured with the
-same plugin and the same host, a trusted run delivered
-`idle`/`working`/`end`, while an untrusted `codex exec` delivered nothing at all -
-not even the hook script's own debug log. That is Codex's own policy (untrusted
-hooks stay in the sandbox), not a bug here. `codex exec` can bypass the prompt
+*Trust all and continue*. Measured with the same plugin and the same host: a
+trusted run delivered `idle`/`working`/`end`, while an untrusted `codex exec`
+delivered nothing at all, not even the hook script's own debug log. That is
+Codex's own sandbox policy, not a bug here. `codex exec` can bypass the prompt
 for one run with `--dangerously-bypass-hook-trust`.
 
-## Qwen Code
+| Hook | Agent key |
+| --- | --- |
+| `SessionStart` | Idle |
+| `UserPromptSubmit`, `SubagentStop` | Working |
+| `PermissionRequest` (Codex has no `Notification`) | Awaiting approval |
+| `Interrupt` | Idle |
+| `Stop` | Unread |
+| `SessionEnd` | Off, key released |
 
-`~/.qwen/settings.json`, or a project `.qwen/settings.json`. `async` keeps the
-hook off the critical path:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "async": true, "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "async": true, "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "async": true, "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "async": true, "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"" }] }]
-  }
-}
-```
-
-Keys: interrupt `Ctrl+C`, cancel `Esc`, cycle approval mode `Shift+Tab`
-(`Tab` on Windows), confirm `Enter`. A new session is `/new`, not a key.
-
-## Gemini CLI
-
-`~/.gemini/settings.json`. Gemini's `timeout` is in milliseconds, and a hook's
-stdout must be JSON only (write diagnostics to stderr):
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "matcher": "startup", "hooks": [{ "name": "micro-start", "type": "command", "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"", "timeout": 2000 }] }],
-    "AfterAgent": [{ "hooks": [{ "name": "micro-stop", "type": "command", "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"", "timeout": 2000 }] }],
-    "SessionEnd": [{ "hooks": [{ "name": "micro-end", "type": "command", "command": "node \"<repo>/plugins/codex-micro/hooks/report.mjs\"", "timeout": 2000 }] }]
-  }
-}
-```
-
-Keys: `Enter` confirm, `Esc` cancel, `Ctrl+C` interrupt.
-
-## Goose
-
-Goose plugins live in `~/.agents/plugins/<name>/` with a `plugin.json` and a
-`hooks/hooks.json`. Use the same `SessionStart` / `UserPromptSubmit` / `Stop` /
-`SessionEnd` entries as Qwen Code, with the command pointing at `report.mjs`.
-Goose matchers are regular expressions - leave `matcher` out rather than writing
-`"*"`, which is not a valid one.
-
-Goose documents desktop shortcuts only, so its CLI keymap is **unverified**.
-
-## opencode
-
-Ships as [`plugins/opencode/codex-micro.ts`](../plugins/opencode/codex-micro.ts).
-Copy it to `.opencode/plugins/` (one project) or
-`~/.config/opencode/plugins/` (every project). opencode plugins run in-process,
-so it talks to the control port directly:
-
-```js
-import net from "node:net";
-
-const STATUS = {
-  "session.created": "idle",
-  "session.idle": "unread",
-  "permission.asked": "awaiting-approval",
-  "session.deleted": "end",
-};
-
-export const CodexMicro = async () => ({
-  event: async ({ event }) => {
-    const status = STATUS[event?.type];
-    const session = event?.properties?.sessionID;
-    if (!status || !session) return;
-    const socket = net.connect({
-      host: "127.0.0.1",
-      port: Number(process.env.CODEX_MICRO_PORT ?? 27700),
-    });
-    socket.on("error", () => {});
-    socket.on("connect", () => socket.end(`session ${session} ${status}\n`));
-  },
-});
-```
-
-Keys: `escape` interrupts, `ctrl+x n` opens a session, `ctrl+x q` quits. The
-approval dialog's keys are **unverified**.
+No keyboard preset yet: the Codex CLI keymap has not been verified against its
+own binary, and guessing it would be worse than leaving it unbound.
 
 ## Pi
 
-[Pi](https://pi.dev) (`earendil-works/pi`, MIT) has no hooks config; its
-extension API is the surface. Ships as
-[`plugins/pi/codex-micro.ts`](../plugins/pi/codex-micro.ts) - copy it to
+Pi (`earendil-works/pi`, MIT) has no hooks config; its extension API is the
+surface. Copy [`plugins/pi/codex-micro.ts`](../plugins/pi/codex-micro.ts) to
 `~/.pi/agent/extensions/` (every project) or `<repo>/.pi/extensions/` (one
-project, which needs project trust).
+project, which needs project trust). The session id comes from
+`ctx.sessionManager.getSessionId()`.
 
-| pi event | Agent key |
+| Extension event | Agent key |
 | --- | --- |
 | `session_start` | Idle |
-| `input`, `tool_call`, `tool_execution_start` | Working |
+| `input`, `tool_call`, `tool_execution_start`, `ui_prompt_end` | Working |
 | `ui_prompt_start` | Awaiting approval |
-| `ui_prompt_end` | Working |
 | `agent_settled` | Unread |
-| `session_shutdown` | Off |
+| `session_shutdown` | Off, key released |
 
-The session id comes from `ctx.sessionManager.getSessionId()`, which the
-extension reads on every event. `agent_end` is deliberately not wired: it fires
-between turns, while `agent_settled` is the "pi has really stopped" signal.
+`agent_end` is deliberately not wired: it fires between turns, while
+`agent_settled` is the "pi has really stopped" signal.
 
-Keys (documented defaults): `enter` submits, `escape` interrupts,
-`shift+tab` cycles the thinking level, `ctrl+p` cycles models, `/new` starts a
-fresh session (no default key).
+Preset: [`presets/pi.json`](../presets/pi.json) - `enter` confirms a
+select/confirm dialog, `escape` cancels it.
+
+## opencode
+
+Copy [`plugins/opencode/codex-micro.ts`](../plugins/opencode/codex-micro.ts) to
+`.opencode/plugins/` (one project) or `~/.config/opencode/plugins/` (every
+project). opencode runs plugins in-process, so this one talks to the control
+port directly; unmapped events send nothing.
+
+| opencode event | Agent key |
+| --- | --- |
+| `session.created` | Idle |
+| `session.idle` | Unread |
+| `permission.asked` | Awaiting approval |
+| `session.deleted` | Off, key released |
+
+Preset: [`presets/opencode.json`](../presets/opencode.json) - only submit is
+bound, because opencode's approval dialog has no documented key tokens.
 
 ## DeepSeek Harness
 
-The official `dsh` (MIT, developer preview) has no TUI - it ships a Web UI, an
+The official `dsh` (MIT, developer preview) has no TUI: it ships a Web UI, an
 ACP stdio server and a Codex-style hooks bridge. This adapter uses the hooks
-bridge: ships as [`plugins/deepseek/`](../plugins/deepseek/README.md), reusing
-the shared `report.mjs`.
+bridge - see [`plugins/deepseek/README.md`](../plugins/deepseek/README.md) for
+the plugin install, the `cordis.patch.yml` entry and the `<REPO>` placeholder
+that has to be filled in.
 
 | `dsh` hook | Agent key |
 | --- | --- |
@@ -171,26 +117,25 @@ the shared `report.mjs`.
 | `UserPromptSubmit` | Working |
 | `Stop` | Unread |
 
-`PermissionRequest` is dropped by that bridge and there is no `SessionEnd`, so
-those two states need `dsh`'s ACP surface (`session/request_permission`,
-`session/close`) if you want them. There is nothing honest to bind on the
-keyboard side either: approval and stop are plain buttons in the Web UI with no
-key tokens.
+Two states are missing from that bridge: `PermissionRequest` is dropped, and
+there is no `SessionEnd`, so a key keeps showing "unread" until another session
+takes it. Both exist on `dsh`'s ACP surface (`session/request_permission`,
+`session/close`) if they are ever needed.
 
-## Continue CLI
+There is nothing to bind on the keyboard side: approval and stop are plain
+buttons in the Web UI with no key tokens.
 
-Continue's CLI reads `~/.continue/settings.json` and also Claude Code's own
-`settings.json`, with the same hook names and the same `session_id` payload, so
-the Claude Code plugin above already covers it. Nothing extra to ship.
+## Check an adapter
 
-## Crush and Aider
+```powershell
+node scripts/check-harness-adapters.mjs   # pi + opencode, feeds them real events
+cargo test -p codex-micro-backend         # the host itself
+```
 
-Both can only do half the job, so they get keystrokes only:
+## Not shipped
 
-- **Crush** fires a single `PreToolUse` hook - no session start, no turn end -
-  so it cannot drive an agent key honestly. `Ctrl+P` opens the command palette,
-  `Esc` closes dialogs.
-- **Aider** has no hooks, only `--notifications-command`, and that command gets
-  no arguments and no session id. For one key that says "Aider is waiting", run
-  `report.mjs unread` with `CODEX_MICRO_SESSION=aider` in the environment.
-  Approvals are typed (`y` / `n` plus `Enter`), so bind those.
+Qwen Code, Gemini CLI, Goose and Continue CLI use the same hook shape as Claude
+Code, so an adapter for any of them is one config file - but they are not
+maintained here. Crush exposes only `PreToolUse` (no session start, no turn
+end), Aider only a `--notifications-command` with no payload, Cline's hooks do
+not run on Windows, and Roo Code has no agent event surface at all.

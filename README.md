@@ -16,6 +16,7 @@ plugins/codex-micro/   Claude Code + Codex CLI plugin that reports session state
 plugins/pi/            pi extension: harness events -> agent keys
 plugins/opencode/      opencode plugin: harness events -> agent keys
 plugins/deepseek/      DeepSeek Harness hooks-bridge config
+presets/           per-harness binding maps for the Micro keys
 docs/PROTOCOL.md   the wire protocol, as reverse-engineered
 ```
 
@@ -64,7 +65,10 @@ Dry run is the default everywhere: nothing reaches another window until you
 enable **Send keystrokes** in the app or pass `--live` on the console.
 
 Tests: `cargo test` — framing, RPC, layout, lighting, actions, the knob's
-click/hold gestures, the device state machine and the control protocol.
+click/hold gestures, the device state machine and the control protocol. The
+harness adapters have their own check: `node scripts/check-harness-adapters.mjs`
+feeds the pi extension and the opencode plugin real events and reads the lines
+they send.
 
 ## Pointing it at another harness
 
@@ -128,9 +132,11 @@ host hands out a free key, so six terminals need no per-shell setup at all
 (`CODEX_MICRO_AGENT=0..5` still pins one when you want it). Codex CLI uses the
 same script with its own manifest and hook file — its first run asks you to
 trust the hooks, and an untrusted hook runs sandboxed and never reaches the
-host. See [`plugins/codex-micro`](plugins/codex-micro) for both, and
-[`docs/HARNESSES.md`](docs/HARNESSES.md) for Qwen Code, Gemini CLI, Goose,
-opencode and the harnesses that only get keystrokes.
+host. See [`plugins/codex-micro`](plugins/codex-micro) for both, plus
+[`plugins/pi`](plugins/pi), [`plugins/opencode`](plugins/opencode) and
+[`plugins/deepseek`](plugins/deepseek) for the other three supported harnesses.
+[`docs/HARNESSES.md`](docs/HARNESSES.md) has the per-harness tables and
+[`presets/`](presets/README.md) the keystroke maps for the Micro keys.
 
 ## Deliberate differences
 

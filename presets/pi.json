@@ -1,0 +1,7 @@
+{
+  "bindings": {
+    "composer.submit": "enter",
+    "approval.approve": "enter",
+    "approval.decline": "escape"
+  }
+}
