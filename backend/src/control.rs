@@ -7,6 +7,8 @@
 //! ```text
 //! agent 0 working          # key 0 shows the working colour
 //! agent 0 off
+//! session 7f3a working     # the host picks a free key and remembers the owner
+//! session 7f3a end         # releases that key
 //! fleet awaiting-approval  # one status across the whole ring
 //! fleet off
 //! voice recording          # ambient ring, push-to-talk / dictation
@@ -33,6 +35,13 @@ pub enum Command {
     Agent {
         index: usize,
         status: SlotStatus,
+    },
+    /// `session <id> <status>` — the host picks the agent key and remembers which
+    /// session owns it, so a harness reports an id it already has instead of
+    /// asking the user to hand-assign key numbers. `end`/`off` releases it.
+    Session {
+        id: String,
+        status: Option<SlotStatus>,
     },
     /// `None` clears the fleet-wide status.
     Fleet(Option<SlotStatus>),
@@ -65,6 +74,20 @@ pub fn parse(line: &str) -> Result<Command, String> {
                 status: enum_value(status)?,
             })
         }
+        "session" => {
+            let [id, state] = args.as_slice() else {
+                return Err("usage: session <id> <status|end>".to_string());
+            };
+            validate_session_id(id)?;
+            let status = match *state {
+                "end" | "off" => None,
+                other => Some(enum_value(other)?),
+            };
+            Ok(Command::Session {
+                id: (*id).to_string(),
+                status,
+            })
+        }
         "fleet" => match args.as_slice() {
             ["off"] | [] => Ok(Command::Fleet(None)),
             [status] => Ok(Command::Fleet(Some(enum_value(status)?))),
@@ -93,6 +116,21 @@ pub fn parse(line: &str) -> Result<Command, String> {
         },
         other => Err(format!("unknown command: {other}")),
     }
+}
+
+/// Session ids come from other programs, so keep them to one short token: no
+/// whitespace (the socket is line-based) and no unbounded growth.
+fn validate_session_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 64 {
+        return Err("session id must be 1-64 characters".to_string());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    {
+        return Err(format!("session id has unsupported characters: {id}"));
+    }
+    Ok(())
 }
 
 /// Deserialise an enum from its kebab-case name, so the socket vocabulary can
@@ -226,6 +264,28 @@ mod tests {
             })
         );
         assert_eq!(
+            parse("session 7f3a working"),
+            Ok(Command::Session {
+                id: "7f3a".to_string(),
+                status: Some(SlotStatus::Working)
+            })
+        );
+        assert_eq!(
+            parse("session 7f3a end"),
+            Ok(Command::Session {
+                id: "7f3a".to_string(),
+                status: None
+            })
+        );
+        assert_eq!(
+            parse("session 7f3a off"),
+            Ok(Command::Session {
+                id: "7f3a".to_string(),
+                status: None
+            }),
+            "off releases the key too — a released key is dark either way"
+        );
+        assert_eq!(
             parse("fleet awaiting-approval"),
             Ok(Command::Fleet(Some(SlotStatus::AwaitingApproval)))
         );
@@ -249,6 +309,14 @@ mod tests {
         assert!(parse("brightness 101").is_err());
         assert!(parse("brightness -1").is_err());
         assert!(parse("selection maybe").is_err());
+        assert!(parse("session").is_err());
+        assert!(parse("session 7f3a").is_err());
+        assert!(parse("session 7f3a sleeping").is_err());
+        assert!(parse("session a/b working").is_err(), "one bare token only");
+        assert!(
+            parse(&format!("session {} working", "x".repeat(65))).is_err(),
+            "an id long enough to be a payload is refused"
+        );
     }
 
     /// Stand in for the device loop: apply the next command and answer for it.

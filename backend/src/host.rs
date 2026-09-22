@@ -105,6 +105,95 @@ pub struct Snapshot {
     pub log: Vec<String>,
 }
 
+/// Which session owns which agent key.
+///
+/// A harness reports an id it already has (a Claude Code `session_id`, a Codex
+/// thread id, …) and the host answers with the key it took. Keys are handed out
+/// lowest-first; when all six are taken the dullest owner loses its key, because
+/// a harness that crashed will never release anything.
+///
+/// ponytail: steal-the-oldest policy, no per-session pinning — add pinning when
+/// somebody actually wants a fixed key per project.
+#[derive(Default)]
+struct SessionSlots {
+    owners: Vec<Option<String>>,
+    touched: Vec<Instant>,
+}
+
+impl SessionSlots {
+    fn with_keys(count: usize) -> Self {
+        Self {
+            owners: vec![None; count],
+            touched: vec![Instant::now(); count],
+        }
+    }
+
+    #[cfg(test)]
+    fn owner(&self, index: usize) -> Option<&str> {
+        self.owners.get(index)?.as_deref()
+    }
+
+    /// The key `id` should use, claiming or stealing one if it has none.
+    /// `slots` is only read, to work out which key is safest to take over.
+    fn assign(&mut self, id: &str, slots: &[AgentSlot], now: Instant) -> usize {
+        if let Some(index) = self.index_of(id) {
+            self.touched[index] = now;
+            return index;
+        }
+        let index = self
+            .owners
+            .iter()
+            .position(Option::is_none)
+            .unwrap_or_else(|| self.victim(slots));
+        self.owners[index] = Some(id.to_string());
+        self.touched[index] = now;
+        index
+    }
+
+    /// Give the key back. `None` when this session never had one.
+    fn release(&mut self, id: &str) -> Option<usize> {
+        let index = self.index_of(id)?;
+        self.owners[index] = None;
+        Some(index)
+    }
+
+    /// A manual `agent <n> …` takes the key back from whichever session had it.
+    fn clear(&mut self, index: usize) {
+        if let Some(owner) = self.owners.get_mut(index) {
+            *owner = None;
+        }
+    }
+
+    fn index_of(&self, id: &str) -> Option<usize> {
+        self.owners.iter().position(|owner| owner.as_deref() == Some(id))
+    }
+
+    /// The key to take over: the dullest status first (`off`, then idle, …),
+    /// oldest first within the same status.
+    fn victim(&self, slots: &[AgentSlot]) -> usize {
+        (0..self.owners.len())
+            .min_by_key(|&index| {
+                let status = slots.get(index).map_or(SlotStatus::Off, |slot| slot.status);
+                (interest(status), self.touched[index])
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// How much a status is worth keeping: a session working right now outranks one
+/// that already finished, and a key showing nothing is worth nothing.
+fn interest(status: SlotStatus) -> u8 {
+    match status {
+        SlotStatus::Off => 0,
+        SlotStatus::Idle => 1,
+        SlotStatus::Unread => 2,
+        SlotStatus::AwaitingResponse => 3,
+        SlotStatus::AwaitingApproval => 4,
+        SlotStatus::Error => 5,
+        SlotStatus::Working => 6,
+    }
+}
+
 pub struct Host<O: Opener> {
     pub device: Device<O>,
     /// Where keystrokes go: the real Windows one, or the logging one for dry runs.
@@ -113,6 +202,8 @@ pub struct Host<O: Opener> {
     lighting: LightingModel,
     brightness_percent: u8,
     slots: Vec<AgentSlot>,
+    /// Session-to-key bookkeeping, so `session <id> …` can pick a key itself.
+    sessions: SessionSlots,
     fleet: Option<SlotStatus>,
     voice: VoiceState,
     selection: bool,
@@ -136,6 +227,7 @@ impl<O: Opener> Host<O> {
             lighting,
             brightness_percent,
             slots: crate::lighting::default_agent_slots(),
+            sessions: SessionSlots::with_keys(usize::from(crate::lighting::AGENT_SLOT_COUNT)),
             fleet: None,
             voice: VoiceState::Idle,
             selection: false,
@@ -212,8 +304,27 @@ impl<O: Opener> Host<O> {
                     return format!("err: agent index {index} out of range");
                 };
                 slot.status = status;
+                // picking a key by hand wins it back from whichever session had it
+                self.sessions.clear(index);
                 self.device.set_slots(self.slots.clone());
                 format!("ok agent {index} {}", self.slots[index].status.to_token())
+            }
+            Command::Session { id, status } => {
+                let Some(status) = status else {
+                    let Some(index) = self.sessions.release(&id) else {
+                        return format!("ok session {id} held no key");
+                    };
+                    self.slots[index].status = SlotStatus::Off;
+                    self.device.set_slots(self.slots.clone());
+                    return format!("ok session {id} agent {index} off");
+                };
+                let index = self.sessions.assign(&id, &self.slots, Instant::now());
+                let Some(slot) = self.slots.get_mut(index) else {
+                    return format!("err: no agent key to give session {id}");
+                };
+                slot.status = status;
+                self.device.set_slots(self.slots.clone());
+                format!("ok session {id} agent {index} {}", status.to_token())
             }
             Command::Fleet(status) => {
                 self.fleet = status;
@@ -415,5 +526,50 @@ mod tests {
                 Trigger::EncoderLongPress(Some(Action::Command("settings".into())))
             );
         }
+    }
+
+    #[test]
+    fn a_session_keeps_its_key_until_it_ends() {
+        let now = Instant::now();
+        let slots = crate::lighting::default_agent_slots();
+        let mut table = SessionSlots::with_keys(6);
+        assert_eq!(table.assign("a", &slots, now), 0);
+        assert_eq!(table.assign("b", &slots, now), 1);
+        assert_eq!(table.assign("a", &slots, now), 0, "same session, same key");
+        assert_eq!(table.owner(0), Some("a"));
+        assert_eq!(table.release("a"), Some(0));
+        assert_eq!(table.release("a"), None, "a key is only given back once");
+        assert_eq!(table.assign("c", &slots, now), 0, "the freed key is reused");
+    }
+
+    #[test]
+    fn all_six_taken_the_dullest_key_changes_hands() {
+        let now = Instant::now();
+        let mut slots = crate::lighting::default_agent_slots();
+        let mut table = SessionSlots::with_keys(6);
+        for (step, id) in ["a", "b", "c", "d", "e", "f"].into_iter().enumerate() {
+            let index = table.assign(id, &slots, now + Duration::from_secs(step as u64));
+            slots[index].status = SlotStatus::Working;
+        }
+        slots[3].status = SlotStatus::Idle; // went quiet a while ago
+        slots[2].status = SlotStatus::Unread; // finished, still waiting to be read
+        let index = table.assign("g", &slots, now + Duration::from_secs(60));
+        assert_eq!(index, 3, "an idle key changes hands before an unread one");
+        assert_eq!(table.owner(3), Some("g"));
+    }
+
+    #[test]
+    fn a_manual_agent_command_takes_the_key_back() {
+        let now = Instant::now();
+        let slots = crate::lighting::default_agent_slots();
+        let mut table = SessionSlots::with_keys(6);
+        let index = table.assign("a", &slots, now);
+        table.clear(index);
+        assert_eq!(table.owner(index), None);
+        assert_eq!(
+            table.assign("b", &slots, now),
+            index,
+            "the freed key goes to the next session"
+        );
     }
 }

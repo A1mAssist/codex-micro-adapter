@@ -22,19 +22,23 @@ claude plugin install codex-micro@codex-micro-adapter
 or, if you prefer to keep it local, copy `plugins/claude-code` into
 `~/.claude/plugins/` and enable it.
 
-Requirements: Node.js on `PATH` (the hooks are a 12-line script) and the Codex
+Requirements: Node.js on `PATH` (the hooks are a 40-line script) and the Codex
 Micro host running — start `codex-micro-desktop`, or `codex-micro-backend run
 --live` for the console host.
 
-## Configuration
+## Which key lights up
+
+Every hook forwards the `session_id` from Claude Code's own payload, and the
+host hands out the agent keys itself — so six terminals need no per-shell
+setup. The host answers with the key it took (`ok session 7f3a agent 3
+working`): keys go lowest-first, and when all six are taken the dullest one
+changes hands (`off`, then idle, then unread, then the waiting/working states).
 
 | variable | default | meaning |
 | --- | --- | --- |
-| `CODEX_MICRO_AGENT` | `0` | which agent key (0-5) this session lights |
 | `CODEX_MICRO_PORT` | `27700` | the host's control port |
-
-With several terminals open, set a different `CODEX_MICRO_AGENT` per shell so
-each session owns a key.
+| `CODEX_MICRO_AGENT` | unset | pin one key (0-5) instead of letting the host choose |
+| `CODEX_MICRO_SESSION` | unset | override the session id the host sees |
 
 ## Tuning the states
 
