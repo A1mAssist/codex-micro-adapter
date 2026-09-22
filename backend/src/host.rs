@@ -118,6 +118,9 @@ pub struct Snapshot {
 struct SessionSlots {
     owners: Vec<Option<String>>,
     touched: Vec<Instant>,
+    /// The window that was in front while this session last reported activity,
+    /// so tapping its agent key can bring the session back.
+    windows: Vec<Option<isize>>,
 }
 
 impl SessionSlots {
@@ -125,7 +128,20 @@ impl SessionSlots {
         Self {
             owners: vec![None; count],
             touched: vec![Instant::now(); count],
+            windows: vec![None; count],
         }
+    }
+
+    /// Remember the window a session was reporting from.
+    fn set_window(&mut self, index: usize, hwnd: isize) {
+        if let Some(window) = self.windows.get_mut(index) {
+            *window = Some(hwnd);
+        }
+    }
+
+    /// The window this agent key should bring forward, when one was seen.
+    fn window(&self, index: usize) -> Option<isize> {
+        self.windows.get(index).copied().flatten()
     }
 
     #[cfg(test)]
@@ -154,6 +170,9 @@ impl SessionSlots {
     fn release(&mut self, id: &str) -> Option<usize> {
         let index = self.index_of(id)?;
         self.owners[index] = None;
+        if let Some(window) = self.windows.get_mut(index) {
+            *window = None;
+        }
         Some(index)
     }
 
@@ -161,6 +180,9 @@ impl SessionSlots {
     fn clear(&mut self, index: usize) {
         if let Some(owner) = self.owners.get_mut(index) {
             *owner = None;
+        }
+        if let Some(window) = self.windows.get_mut(index) {
+            *window = None;
         }
     }
 
@@ -323,6 +345,17 @@ impl<O: Opener> Host<O> {
                     return format!("err: no agent key to give session {id}");
                 };
                 slot.status = status;
+                // A session that is starting or working is the one the user is
+                // typing in, so the window in front is almost certainly its
+                // terminal. An unread/awaiting event can land while another app
+                // is focused, so it must not overwrite what we already know.
+                // ponytail: heuristic — let a plugin report a window handle if a
+                // multiplexer or a single-window tab layout makes it wrong.
+                if matches!(status, SlotStatus::Idle | SlotStatus::Working) {
+                    if let Some(hwnd) = crate::performer::foreground_window() {
+                        self.sessions.set_window(index, hwnd);
+                    }
+                }
                 self.device.set_slots(self.slots.clone());
                 format!("ok session {id} agent {index} {}", status.to_token())
             }
@@ -422,6 +455,27 @@ impl<O: Opener> Host<O> {
                 if click {
                     let trigger = click_trigger(self.device.layout());
                     out.push(self.run(trigger));
+                }
+            }
+            // tapping an agent key brings its session's window forward; when no
+            // window was seen the binding table says what the key does instead
+            Trigger::AgentKey(index) => {
+                let slot = usize::from(index);
+                match self
+                    .sessions
+                    .window(slot)
+                    .map(crate::performer::focus_window)
+                {
+                    Some(Ok(())) => {
+                        for (i, agent) in self.slots.iter_mut().enumerate() {
+                            agent.selected = i == slot;
+                        }
+                        self.device.set_slots(self.slots.clone());
+                        out.push(HostEvent::Action(Outcome::Sent(format!(
+                            "focus the window of agent {slot}"
+                        ))));
+                    }
+                    _ => out.push(self.run(Trigger::AgentKey(index))),
                 }
             }
             other => out.push(self.run(other)),
@@ -556,6 +610,28 @@ mod tests {
         let index = table.assign("g", &slots, now + Duration::from_secs(60));
         assert_eq!(index, 3, "an idle key changes hands before an unread one");
         assert_eq!(table.owner(3), Some("g"));
+    }
+
+    #[test]
+    fn an_agent_key_remembers_the_window_its_session_came_from() {
+        let now = Instant::now();
+        let slots = crate::lighting::default_agent_slots();
+        let mut table = SessionSlots::with_keys(6);
+        let index = table.assign("a", &slots, now);
+        assert_eq!(table.window(index), None, "nothing seen yet");
+        table.set_window(index, 0x1234);
+        assert_eq!(table.window(index), Some(0x1234));
+        table.clear(index);
+        assert_eq!(
+            table.window(index),
+            None,
+            "a manual agent command forgets it"
+        );
+
+        let index = table.assign("b", &slots, now);
+        table.set_window(index, 0x5678);
+        assert_eq!(table.release("b"), Some(index));
+        assert_eq!(table.window(index), None, "a released key has no window");
     }
 
     #[test]

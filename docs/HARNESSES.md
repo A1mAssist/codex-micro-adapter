@@ -17,6 +17,14 @@ Five harnesses are supported, each in two directions:
 | opencode | `plugins/opencode/codex-micro.ts` | plugin event bus | runtime: a real opencode session lit the keys |
 | DeepSeek Harness (`dsh`) | `plugins/deepseek/` | hooks bridge | installed, ACP session verified; hook events need a DeepSeek key |
 
+## Agent keys
+
+Tapping an agent key focuses the window that session last reported from and
+lights the key as selected; the host captures that window while a session is
+starting or working. With no window known — or when Windows refuses the focus
+change — the tap falls back to the `agent.focus.<n>` binding. See
+[`presets/README.md`](../presets/README.md).
+
 ## Claude Code
 
 ```bash

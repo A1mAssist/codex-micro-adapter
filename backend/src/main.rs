@@ -37,6 +37,7 @@ fn main() {
         Some("run") => run(args.iter().any(|a| a == "--live")),
         Some("send") => send(&args[1..]),
         Some("config") => print_config(),
+        Some("window") => print_window(&args[1..]),
         _ => usage(),
     }
 }
@@ -49,6 +50,29 @@ fn usage() {
     println!("  run [--live]               run the host; --live injects real keystrokes");
     println!("  send <control command...>  push state to a running host");
     println!("  config                     print the config path and the defaults");
+    println!("  window                     print the window that has focus right now");
+}
+
+/// What an agent key would focus if it were pressed now. Handy when a session
+/// seems to remember the wrong window. `window --focus <hwnd>` exercises the
+/// focus call itself, which is otherwise only reachable from the keyboard.
+fn print_window(args: &[String]) {
+    if let Some(value) = args.iter().position(|a| a == "--focus").and_then(|i| args.get(i + 1)) {
+        let parsed = value
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let hwnd = isize::from_str_radix(parsed, 16)
+            .or_else(|_| value.parse::<isize>())
+            .unwrap_or(0);
+        return match codex_micro_backend::performer::focus_window(hwnd) {
+            Ok(()) => println!("focused window: {hwnd:#x}"),
+            Err(err) => println!("could not focus {hwnd:#x}: {err}"),
+        };
+    }
+    match codex_micro_backend::performer::foreground_window() {
+        Some(hwnd) => println!("foreground window: {hwnd:#x}"),
+        None => println!("no window has focus"),
+    }
 }
 
 fn print_config() {

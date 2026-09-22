@@ -27,6 +27,29 @@ impl Performer for LoggingPerformer {
 #[cfg(windows)]
 pub use windows_impl::WindowsPerformer;
 
+/// The window that has focus right now, as an opaque handle. The host stores it
+/// while a session reports activity, so an agent key can bring it back later.
+#[cfg(windows)]
+pub fn foreground_window() -> Option<isize> {
+    windows_impl::foreground_window()
+}
+
+#[cfg(not(windows))]
+pub fn foreground_window() -> Option<isize> {
+    None
+}
+
+/// Bring a stored window back to the front.
+#[cfg(windows)]
+pub fn focus_window(hwnd: isize) -> Result<(), String> {
+    windows_impl::focus_window(hwnd)
+}
+
+#[cfg(not(windows))]
+pub fn focus_window(_hwnd: isize) -> Result<(), String> {
+    Err("window focusing is Windows-only for now".to_string())
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use super::*;
@@ -34,8 +57,12 @@ mod windows_impl {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
     };
+    use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE,
+        SW_SHOWNORMAL,
+    };
 
     /// Virtual keys for the four modifiers, in press order.
     const MODIFIER_VKS: [(fn(&crate::actions::Modifiers) -> bool, u16); 4] = [
@@ -84,6 +111,30 @@ mod windows_impl {
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// The window the user is looking at right now. Windows hands back a null
+    /// handle when nothing has focus, which a session can never be.
+    pub fn foreground_window() -> Option<isize> {
+        let hwnd = unsafe { GetForegroundWindow() };
+        (!hwnd.is_null()).then_some(hwnd as isize)
+    }
+
+    /// Put a stored window back in front, restoring it first when minimised.
+    pub fn focus_window(hwnd: isize) -> Result<(), String> {
+        let hwnd = hwnd as HWND;
+        unsafe {
+            if IsWindow(hwnd) == 0 {
+                return Err("that window is gone".to_string());
+            }
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+            if SetForegroundWindow(hwnd) == 0 {
+                return Err("Windows refused the focus change".to_string());
+            }
+        }
+        Ok(())
     }
 
     impl Performer for WindowsPerformer {

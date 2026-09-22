@@ -446,6 +446,9 @@ pub fn slot_for_key(key: &str, separate_microphone_keys: bool) -> Option<&'stati
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
     Act(Action),
+    /// One of the six agent keys was pressed: focus that session's window, or
+    /// fall back to the `agent.focus.<n>` binding.
+    AgentKey(u8),
     PushToTalk {
         press: bool,
     },
@@ -479,6 +482,15 @@ pub fn encoder_action(layout: &Layout, gesture: &str) -> Option<Action> {
 /// Resolve a key/encoder event. Port of the bridge's `wt` + `Tt` + `Ot`.
 pub fn resolve_event(event: &HidEvent, layout: &Layout) -> Option<Trigger> {
     let key = event.key.as_str();
+
+    // The six agent keys are buttons as well as lights. They are not keycaps, so
+    // there is no layout action to resolve: the host focuses the session that
+    // owns that key, and falls back to the `agent.focus.<n>` binding.
+    if let Some(rest) = key.strip_prefix("AG") {
+        let index: u8 = rest.parse().ok()?;
+        return (event.act == 1 && index < crate::lighting::AGENT_SLOT_COUNT)
+            .then_some(Trigger::AgentKey(index));
+    }
 
     // encoder rotation never produces a key action
     if key == "ENC_CW" || key == "ENC_CC" {
@@ -681,6 +693,27 @@ mod tests {
             None,
             "agent keys are not slots"
         );
+    }
+
+    #[test]
+    fn agent_keys_are_buttons_too() {
+        let layout = Layout::default();
+        assert_eq!(
+            resolve_event(&hid("AG00", 1), &layout),
+            Some(Trigger::AgentKey(0)),
+            "the first agent key focuses agent 0"
+        );
+        assert_eq!(
+            resolve_event(&hid("AG05", 1), &layout),
+            Some(Trigger::AgentKey(5))
+        );
+        assert_eq!(
+            resolve_event(&hid("AG00", 0), &layout),
+            None,
+            "only presses fire"
+        );
+        assert_eq!(resolve_event(&hid("AG09", 1), &layout), None, "out of range");
+        assert_eq!(resolve_event(&hid("AGXX", 1), &layout), None);
     }
 
     #[test]

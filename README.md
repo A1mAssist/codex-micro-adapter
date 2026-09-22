@@ -59,6 +59,7 @@ cargo run -p codex-micro-backend -- run           # dry run: actions are logged
 cargo run -p codex-micro-backend -- run --live    # inject real keystrokes
 cargo run -p codex-micro-backend -- list          # enumerate HID interfaces
 cargo run -p codex-micro-backend -- listen        # read-only: print what the keyboard sends
+cargo run -p codex-micro-backend -- window        # which window an agent key would focus
 ```
 
 Dry run is the default everywhere: nothing reaches another window until you
@@ -105,6 +106,17 @@ codex-micro-backend send "voice recording"           # ambient ring goes blue
 codex-micro-backend send "brightness 40"
 codex-micro-backend send "fleet error"               # whole ring, ignores per-key state
 ```
+
+**Agent keys are buttons too.** Tapping agent key N brings the window that
+session last reported from back to the front, and lights the key as selected the
+way the app highlights the thread you switched to. The host remembers the window
+that had focus while a session was *starting or working* — the user is typing
+there at that moment — and never lets an `unread`/`awaiting` event overwrite it,
+so a background session cannot steal another app's window. With no window known
+(a headless run, or a multiplexer tab) or when Windows refuses the focus change,
+the tap falls back to the `agent.focus.<n>` binding, so a tmux user can map it to
+their own switch keys. `codex-micro-backend window` prints what would be focused
+right now, and `window --focus <hwnd>` exercises the focus call itself.
 
 `session <id> <status>` is what a harness plugin wants: it reports the session id
 it already has and the host answers with the agent key it took

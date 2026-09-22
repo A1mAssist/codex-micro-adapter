@@ -104,6 +104,8 @@ fn lookup_key(trigger: &Trigger) -> Option<String> {
         | Trigger::EncoderClick(Some(action))
         | Trigger::EncoderLongPress(Some(action)) => Some(action_key(action)),
         Trigger::PushToTalk { .. } => Some("ptt".to_string()),
+        // what an agent key does when its session has no window to focus
+        Trigger::AgentKey(index) => Some(format!("agent.focus.{index}")),
         Trigger::EncoderPress => Some("encoder:press".to_string()),
         Trigger::EncoderRelease => Some("encoder:release".to_string()),
         // the knob gestures the layout did not bind: a harness can bind these

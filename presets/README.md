@@ -72,17 +72,34 @@ approval dialog has no documented keys, so neither is in the preset.
 
 ## Agent keys
 
-Pressing an agent key (`AG00`-`AG05`) goes through the same path as any other
-slot: give the slot an action in the settings page (or `config.json`) and that
-action resolves through `bindings`. So tapping key 3 can send a keystroke such as
-`alt+3` to switch terminal tabs. What it cannot do is focus another program's
-window - no harness exposes "switch to session N", and the host does not steal
-focus.
+Tapping an agent key is a real action, not a keystroke: the host brings the
+window that session last reported from back to the front and marks the key as
+selected. It remembers the window that had focus while the session was
+**starting or working**; `unread` and `awaiting` events never overwrite it, so a
+background session cannot steal another app's window.
+
+Fallback: when no window was ever seen (a headless run, or a tab in a shared
+terminal window) or Windows refuses the focus change, the tap goes through the
+binding table as `agent.focus.0` … `agent.focus.5` - map those to your own
+switch keys if you have a better idea for your setup.
+
+```json
+{
+  "bindings": {
+    "agent.focus.0": "ctrl+alt+1",
+    "agent.focus.1": "ctrl+alt+2"
+  }
+}
+```
+
+`codex-micro-backend window` prints the window that has focus right now, and
+`window --focus <hwnd>` exercises the focus call.
 
 ## Not expressible today
 
 - **Multi-step sequences** (`ctrl+b` then `1` for tmux, opencode's leader):
-  the binding grammar is one combo, one text or one URL per action.
+  the binding grammar is one combo, one text or one URL per action. Agent-key
+  taps no longer need this - they focus the session window directly.
 - **Push-to-talk on other harnesses**: only Claude Code has a voice key; the
   Micro's mic key can still drive `ptt` where a harness listens for one.
 - **ChatGPT-only behaviour** (thread list, focus-thread, its command registry):
