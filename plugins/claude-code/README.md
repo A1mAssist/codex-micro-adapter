@@ -15,8 +15,8 @@ nothing is sent anywhere else.
 ## Install
 
 ```bash
-claude plugin marketplace add A1mAssist/codex-micro-harness
-claude plugin install codex-micro@codex-micro-harness
+claude plugin marketplace add A1mAssist/codex-micro-adapter
+claude plugin install codex-micro@codex-micro-adapter
 ```
 
 or, if you prefer to keep it local, copy `plugins/claude-code` into

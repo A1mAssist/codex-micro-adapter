@@ -1,4 +1,4 @@
-# Codex Micro Harness
+# Codex Micro Adapter
 
 Use the Work Louder **Codex Micro** keyboard with any coding agent — Claude Code,
 the Codex CLI, Cursor, or anything else that runs in a window.
@@ -102,8 +102,8 @@ States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 For Claude Code, the bundled plugin does this for you:
 
 ```bash
-claude plugin marketplace add A1mAssist/codex-micro-harness
-claude plugin install codex-micro@codex-micro-harness
+claude plugin marketplace add A1mAssist/codex-micro-adapter
+claude plugin install codex-micro@codex-micro-adapter
 ```
 
 Session start, prompt submit, tool use, Stop, Notification and session end then

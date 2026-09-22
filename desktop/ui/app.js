@@ -1,8 +1,11 @@
 // Codex Micro settings surface.
 //
-// The catalogue, labels, defaults and dialogs mirror the app's own settings
-// chunk; the numbers and option ids come from the same place, so a layout saved
-// here is the layout the app would have written.
+// Catalogue, option ids, defaults and dialog copy mirror the app's own settings
+// chunk; the icons come from the app's icon components (see icons.js). What the
+// app keeps inside its thread store — agent key sources, thread titles — is
+// replaced here by the control socket, which is what the Adapter card documents.
+
+import { iconSvg } from "./icons.js";
 
 const invoke = window.__TAURI__.core.invoke;
 
@@ -26,47 +29,47 @@ const STATUS_LABELS = {
   off: "Off",
 };
 
-// The app's keycap catalogue: legend, catalogue default, and which slots it fits.
+/** The app's keycap catalogue: legend, icon id, catalogue default action. */
 const KEYCAPS = [
-  { id: "FAST", legend: "FAST", command: "composer.toggleFastMode", label: "Toggle Fast mode" },
-  { id: "APPR", legend: "APPR", command: "approval.approve", label: "Approve" },
-  { id: "REJ", legend: "REJ", command: "approval.decline", label: "Reject" },
-  { id: "SPLIT", legend: "FORK", command: "forkThread", label: "Fork chat" },
-  { id: "MIC", legend: "MIC", named: "Push to talk", size: "double" },
-  { id: "MIC1", legend: "MIC1", named: "Push to talk" },
-  { id: "CODEX", legend: "CODEX", command: "composer.submit", label: "Send message" },
-  { id: "BUG", legend: "BUG", command: "feedback", label: "Open feedback" },
-  { id: "OAI", legend: "OAI", url: "https://developers.openai.com", label: "Open OpenAI docs" },
-  { id: "TERM", legend: "TERM", command: "toggleTerminal", label: "Toggle terminal" },
-  { id: "DWN", legend: "DWN", command: "copyConversationMarkdown", label: "Copy chat as Markdown" },
-  { id: "DEL", legend: "DEL", command: "archiveThread", label: "Archive chat" },
-  { id: "NEW", legend: "NEW", command: "newTask", label: "New chat" },
-  { id: "NAV", legend: "NAV", command: "openBrowserTab", label: "Open browser tab" },
-  { id: "MAGIC", legend: "MAGIC", command: "toggleThreadPin", label: "Pin or unpin chat" },
-  { id: "DIFF", legend: "DIFF", command: "toggleReviewTab", label: "Toggle review" },
-  { id: "PLAY", legend: "PLAY", command: "environmentAction1", label: "Run primary action" },
-  { id: "GIT", legend: "GIT", command: "git.commit", label: "Commit or push" },
-  { id: "BRCH", legend: "DRAFT", command: "git.createDraftPullRequest", label: "Create draft PR" },
-  { id: "BRANCH", legend: "BRANCH", command: "git.createBranch", label: "Create branch" },
-  { id: "MRG", legend: "MRG", command: "git.mergePullRequest", label: "Merge PR" },
-  { id: "PR", legend: "PR", command: "git.createPullRequest", label: "Create PR" },
-  { id: "PAINT", legend: "PAINT", command: "composer.addPhotos", label: "Add photos" },
-  { id: "LAB", legend: "LAB", command: "settings", label: "Open Settings" },
-  { id: "PARTY", legend: "PARTY", command: "openSideChat", label: "Open side chat" },
-  { id: "TIME", legend: "TIME", command: "manageTasks", label: "Open Scheduled" },
-  { id: "MIND+", legend: "MIND+", command: "composer.increaseReasoningEffort", label: "Increase reasoning effort" },
-  { id: "MIND-", legend: "MIND-", command: "composer.decreaseReasoningEffort", label: "Decrease reasoning effort" },
-  { id: "EMPT1", legend: "EMPT1", custom: true, label: "Assign any shortcut" },
-  { id: "EMPT2", legend: "EMPT2", custom: true, label: "Assign any shortcut" },
-  { id: "EMPT3", legend: "EMPT3", custom: true, label: "Assign any shortcut" },
-  { id: "EMPT4", legend: "EMPT4", custom: true, label: "Assign any shortcut" },
-  { id: "SETUP", legend: "SETUP", command: "settings", label: "Open Settings" },
-  { id: "FOLD", legend: "FOLD", command: "openFolder", label: "Open folder" },
-  { id: "UPL", legend: "UPL", command: "composer.addFiles", label: "Attach files and folders" },
-  { id: "APPS", legend: "APPS", command: "openSkills", label: "Open plugins" },
-  { id: "YOLO", legend: ":yolo:", text: ":yolo:", label: "Write :yolo: in the composer" },
-  { id: "YEET", legend: ":yeet:", text: ":yeet:", label: "Write :yeet: in the composer" },
-  { id: "EMPT5", legend: "EMPT5", custom: true, size: "double" },
+  { id: "FAST", legend: "FAST", icon: "lightning-outline", command: "composer.toggleFastMode", label: "Toggle Fast mode" },
+  { id: "APPR", legend: "APPR", icon: "check-circle", command: "approval.approve", label: "Approve" },
+  { id: "REJ", legend: "REJ", icon: "x-circle", command: "approval.decline", label: "Reject" },
+  { id: "SPLIT", legend: "FORK", icon: "worktree", command: "forkThread", label: "Fork chat" },
+  { id: "MIC", legend: "MIC", icon: "mic", named: "Push to talk", size: "double" },
+  { id: "MIC1", legend: "MIC1", icon: "mic", named: "Push to talk" },
+  { id: "CODEX", legend: "CODEX", icon: "codex", command: "composer.submit", label: "Send message" },
+  { id: "BUG", legend: "BUG", icon: "bug", command: "feedback", label: "Open feedback" },
+  { id: "OAI", legend: "OAI", icon: "openai", url: "https://developers.openai.com", label: "Open OpenAI docs" },
+  { id: "TERM", legend: "TERM", icon: "terminal", command: "toggleTerminal", label: "Toggle terminal" },
+  { id: "DWN", legend: "DWN", icon: "download", command: "copyConversationMarkdown", label: "Copy chat as Markdown" },
+  { id: "DEL", legend: "DEL", icon: "trash", command: "archiveThread", label: "Archive chat" },
+  { id: "NEW", legend: "NEW", icon: "compose", command: "newTask", label: "New chat" },
+  { id: "NAV", legend: "NAV", icon: "pointer-outline", command: "openBrowserTab", label: "Open browser tab" },
+  { id: "MAGIC", legend: "MAGIC", icon: "star", command: "toggleThreadPin", label: "Pin or unpin chat" },
+  { id: "DIFF", legend: "DIFF", icon: "diff", command: "toggleReviewTab", label: "Toggle review" },
+  { id: "PLAY", legend: "PLAY", icon: "play-outline", command: "environmentAction1", label: "Run primary action" },
+  { id: "GIT", legend: "GIT", icon: "diff", command: "git.commit", label: "Commit or push" },
+  { id: "BRCH", legend: "DRAFT", icon: "pull-request-draft", command: "git.createDraftPullRequest", label: "Create draft PR" },
+  { id: "BRANCH", legend: "BRANCH", icon: "branch", command: "git.createBranch", label: "Create branch" },
+  { id: "MRG", legend: "MRG", icon: "pull-request-merged", command: "git.mergePullRequest", label: "Merge PR" },
+  { id: "PR", legend: "PR", icon: "pull-request", command: "git.createPullRequest", label: "Create PR" },
+  { id: "PAINT", legend: "PAINT", icon: "paint", command: "composer.addPhotos", label: "Add photos" },
+  { id: "LAB", legend: "LAB", icon: "flask", command: "settings", label: "Open Settings" },
+  { id: "PARTY", legend: "PARTY", icon: "confetti", command: "openSideChat", label: "Open side chat" },
+  { id: "TIME", legend: "TIME", icon: "clock", command: "manageTasks", label: "Open Scheduled" },
+  { id: "MIND+", legend: "MIND+", icon: "brain-medium", command: "composer.increaseReasoningEffort", label: "Increase reasoning effort" },
+  { id: "MIND-", legend: "MIND-", icon: "brain-outline", command: "composer.decreaseReasoningEffort", label: "Decrease reasoning effort" },
+  { id: "EMPT1", legend: "EMPT1", icon: "empty", custom: true, label: "Assign any shortcut" },
+  { id: "EMPT2", legend: "EMPT2", icon: "empty", custom: true, label: "Assign any shortcut" },
+  { id: "EMPT3", legend: "EMPT3", icon: "empty", custom: true, label: "Assign any shortcut" },
+  { id: "EMPT4", legend: "EMPT4", icon: "empty", custom: true, label: "Assign any shortcut" },
+  { id: "SETUP", legend: "SETUP", icon: "settings", command: "settings", label: "Open Settings" },
+  { id: "FOLD", legend: "FOLD", icon: "folder-plus", command: "openFolder", label: "Open folder" },
+  { id: "UPL", legend: "UPL", icon: "cloud-upload", command: "composer.addFiles", label: "Attach files and folders" },
+  { id: "APPS", legend: "APPS", icon: "all-products", command: "openSkills", label: "Open plugins" },
+  { id: "YOLO", legend: ":yolo:", icon: "empty", text: ":yolo:", label: "Write :yolo: in the composer" },
+  { id: "YEET", legend: ":yeet:", icon: "empty", text: ":yeet:", label: "Write :yeet: in the composer" },
+  { id: "EMPT5", legend: "EMPT5", icon: "empty", custom: true, size: "double" },
 ];
 
 const AUTO_OFF_OPTIONS = [
@@ -86,54 +89,40 @@ const ENCODER_MODES = [
   ["custom", "Custom assignments"],
 ];
 
+// The app's row asks which store the agent keys follow. A standalone host has
+// exactly one store — whatever the plugins push over the socket — so the row
+// picks which client's plugin is feeding it.
 const HARNESSES = [
-  ["generic", "Any app (focused window)"],
-  ["claude-code", "Claude Code"],
-  ["codex-cli", "Codex CLI"],
+  ["generic", "Any client (control socket)"],
+  ["claude-code", "Claude Code plugin"],
+  ["codex-cli", "Codex CLI hooks"],
+  ["off", "Off"],
 ];
 
 const HARNESS_HINTS = {
   generic:
-    "Keys type into whatever window has focus. Push state from any script with <code>codex-micro-backend send \"agent 0 working\"</code> (states: off, idle, working, unread, awaiting-approval, awaiting-response, error).",
+    'Any script can drive the keys: <code>codex-micro-backend send "agent 0 working"</code>. States: off, idle, working, unread, awaiting-approval, awaiting-response, error.',
   "codex-cli":
-    "Same focused-window behaviour. Point your CLI hooks at <code>codex-micro-backend send</code> to light the agent keys — nothing else to install.",
+    'Point your CLI hooks at <code>codex-micro-backend send</code>; nothing else to install. Keys type into whatever window has focus.',
   "claude-code":
-    "Install the bundled plugin from <code>plugins/claude-code</code> in this repository:<br />" +
-    "<code>claude plugin marketplace add &lt;this repo&gt;</code> then <code>claude plugin install codex-micro</code>.<br />" +
-    "Its hooks report Working / Idle / Awaiting approval over the control socket.",
+    "Install the bundled plugin: <code>claude plugin marketplace add A1mAssist/codex-micro-adapter</code> then <code>claude plugin install codex-micro@codex-micro-adapter</code>.",
+  off: "Agent key updates from the socket are ignored; the keys stay dark.",
 };
 
 const GESTURE_LABELS = { right: "Turn right", left: "Turn left" };
 const STICK_DIRECTIONS = ["up", "right", "down", "left"];
 const STICK_LABELS = { up: "Up", right: "Right", down: "Down", left: "Left" };
 
-const app = {
-  config: null,
-  snapshot: null,
-  live: false,
-  configPath: "",
-};
-
+const app = { config: null, snapshot: null, live: false, configPath: "" };
 let editing = { slotId: null, keycapId: null, action: null, text: "" };
 
 const $ = (id) => document.getElementById(id);
+const keycap = (id) => KEYCAPS.find((k) => k.id === id) || KEYCAPS[0];
+const keycapsForSize = (size) => KEYCAPS.filter((k) => (size === "double" ? k.size === "double" : k.size !== "double"));
 
-function keycap(id) {
-  return KEYCAPS.find((k) => k.id === id) || KEYCAPS[0];
-}
-
-function keycapsForSize(size) {
-  return KEYCAPS.filter((k) => (size === "double" ? k.size === "double" : k.size !== "double"));
-}
-
-/** The action a slot performs: an explicit action wins, then the keycap default. */
 function slotAction(slot) {
-  if (!slot) return null;
-  if (slot.action) {
-    if (slot.action.type === "command") return slot.action.value;
-    return null;
-  }
-  return slot.commandId || keycap(slot.keycapId).command || null;
+  if (!slot || !slot.action || slot.action.type !== "command") return slot?.commandId || keycap(slot?.keycapId).command || null;
+  return slot.action.value;
 }
 
 function slotActionLabel(slot) {
@@ -147,9 +136,7 @@ function slotActionLabel(slot) {
   }
   const command = slotAction(slot);
   if (!command) return "Assign any shortcut";
-  const known = KEYCAPS.find((k) => k.command === command);
-  if (known) return known.label;
-  return command;
+  return KEYCAPS.find((k) => k.command === command)?.label || command;
 }
 
 // ---------------------------------------------------------------- transport
@@ -168,9 +155,12 @@ async function refresh({ structure = false } = {}) {
   }
 }
 
-/** Structural renders happen only after a config change, so dialogs keep focus. */
 function renderStructure() {
-  renderSelectOptions();
+  fill($("auto-off"), AUTO_OFF_OPTIONS);
+  fill($("encoder-mode"), ENCODER_MODES);
+  fill($("harness"), HARNESSES);
+  fill($("mic-mode"), [["push-to-talk", "Push to talk"], ["voice-chat", "Voice Chat (ChatGPT app only)"]]);
+  $("mic-mode").options[1].disabled = true;
   renderChassis();
   renderHarnessHint();
 }
@@ -187,12 +177,6 @@ async function saveConfig() {
   }
 }
 
-function renderSelectOptions() {
-  fill($("auto-off"), AUTO_OFF_OPTIONS);
-  fill($("encoder-mode"), ENCODER_MODES);
-  fill($("harness"), HARNESSES);
-}
-
 function fill(select, options) {
   select.innerHTML = "";
   for (const [value, label] of options) {
@@ -207,61 +191,61 @@ function renderDynamic() {
   const snapshot = app.snapshot || {};
   const config = app.config || {};
 
-  const chip = $("connection-chip");
-  chip.dataset.status = snapshot.status || "not-detected";
-  chip.textContent =
+  $("connection").textContent =
     {
-      connected: "Connected",
+      connected: snapshot.transport === "bluetooth" ? "Connected · Bluetooth" : "Connected",
       detected: "Detected",
-      error: "Connection problem",
+      error: snapshot.error ? `Connection problem` : "Connection problem",
       "not-detected": "Not detected",
     }[snapshot.status] || "Not detected";
 
-  $("connection-note").textContent = snapshot.error
-    ? snapshot.error
-    : snapshot.status === "connected"
-      ? `${snapshot.transport === "bluetooth" ? "Bluetooth" : "USB"} connection`
-      : "Looking for a Codex Micro over USB or Bluetooth.";
-
   $("battery-row").hidden = snapshot.battery == null;
-  $("battery").textContent = snapshot.battery == null ? "" : `${snapshot.battery}%${snapshot.charging ? " · charging" : ""}`;
-  $("firmware-row").hidden = !snapshot.firmware;
-  $("firmware").textContent = snapshot.firmware || "";
+  if (snapshot.battery != null) {
+    $("battery-text").textContent = `${snapshot.battery}%`;
+    $("battery-fill").setAttribute("width", String(Math.max(1, Math.round((snapshot.battery / 100) * 15))));
+    $("battery-fill").setAttribute("opacity", snapshot.charging ? "0.55" : "1");
+  }
 
-  $("brightness").value = config.brightnessPercent ?? 100;
-  setRangeFill($("brightness"));
-  $("brightness-readout").textContent = `${config.brightnessPercent ?? 100}%`;
+  const brightness = config.brightnessPercent ?? 100;
+  $("brightness").value = brightness;
+  $("brightness").style.setProperty("--fill", `${brightness}%`);
+  $("brightness-readout").textContent = `${brightness}%`;
   $("auto-off").value = config.autoOff || "off";
   $("encoder-mode").value = config.layout?.encoderMode || "conversation-scroll";
   $("separate-mic").checked = Boolean(config.layout?.separateMicrophoneKeys);
   $("harness").value = config.harness || "generic";
   $("live-toggle").checked = app.live;
   $("control-port").textContent = `127.0.0.1:${config.controlPort ?? 27700}`;
+  $("config-path").textContent = app.configPath || "";
+  $("knob-note").textContent = knobNote();
 
   const slots = new Map((snapshot.slots || []).map((slot) => [slot.id, slot.status]));
-  document.querySelectorAll(".cell.agent").forEach((cell) => {
+  for (const cell of document.querySelectorAll(".cell.agent")) {
     const status = slots.get(Number(cell.dataset.agent)) || "off";
     const color = STATUS_COLORS[status];
-    const dot = cell.querySelector(".agent-dot");
-    dot.style.setProperty("--status-color", color || "transparent");
-    dot.style.setProperty("--status-opacity", color ? "0.55" : "0");
+    const plate = cell.querySelector(".agent-plate");
+    const active = color && status !== "idle";
+    cell.classList.toggle("lit", Boolean(active));
+    cell.style.setProperty("--lit-color", color || "transparent");
+    plate.style.setProperty("--status-color", active ? "#f0efff" : color || "#6f63d9");
+    plate.style.setProperty("--status-opacity", status === "off" ? "0" : active ? "0.85" : "0.6");
     cell.title = `Agent key ${Number(cell.dataset.agent) + 1}: ${STATUS_LABELS[status] || status}`;
-  });
+  }
 
   renderAgentKeyList(slots);
   $("log").textContent = (snapshot.log || []).slice(-40).join("\n") || "Nothing yet.";
-  $("knob-note").textContent = knobNote();
   renderHarnessHint();
 }
 
 function knobNote() {
-  const mode = app.config?.layout?.encoderMode;
-  return {
-    "composer-navigation": "Move through composer controls and options",
-    reasoning: "Open and adjust reasoning effort",
-    "conversation-scroll": "Scroll through the active conversation",
-    custom: "Choose an action for each turn (click and press-and-hold come from the binding table)",
-  }[mode] || "Choose what turning the knob controls";
+  return (
+    {
+      "composer-navigation": "Move through composer controls and options",
+      reasoning: "Open and adjust reasoning effort",
+      "conversation-scroll": "Scroll through the active conversation",
+      custom: "Choose an action for each turn; click and press-and-hold use the binding table",
+    }[app.config?.layout?.encoderMode] || "Choose what turning the knob controls"
+  );
 }
 
 function renderAgentKeyList(slots) {
@@ -269,21 +253,24 @@ function renderAgentKeyList(slots) {
   list.innerHTML = "";
   for (let id = 0; id < 6; id += 1) {
     const status = slots.get(id) || "off";
-    const entry = document.createElement("div");
-    entry.innerHTML = `<span class="swatch" style="--status-color:${STATUS_COLORS[status] || "transparent"}"></span>
+    const line = document.createElement("div");
+    line.className = "line";
+    line.innerHTML = `<span class="swatch" style="--status-color:${STATUS_COLORS[status] || "#2b2b30"}"></span>
       <span>Agent key ${id + 1}</span>
-      <span style="margin-left:auto;color:var(--text-tertiary)">${STATUS_LABELS[status] || status}</span>`;
-    list.append(entry);
+      <span class="state">${STATUS_LABELS[status] || status}</span>`;
+    list.append(line);
   }
-}
-
-function setRangeFill(input) {
-  input.style.setProperty("--fill", `${input.value}%`);
 }
 
 function renderHarnessHint() {
   const harness = app.config?.harness || "generic";
-  $("harness-hint").innerHTML = HARNESS_HINTS[harness] || HARNESS_HINTS.generic;
+  let hint = document.querySelector(".hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.className = "hint";
+    $("agent-keys").after(hint);
+  }
+  hint.innerHTML = HARNESS_HINTS[harness] || HARNESS_HINTS.generic;
 }
 
 // ------------------------------------------------------------ device preview
@@ -297,18 +284,13 @@ function renderChassis() {
   chassis.append(knobCell(), agentCell(0), agentCell(1), stickCell(), agentCell(2), agentCell(3), agentCell(4), agentCell(5));
   for (const slotId of ["ACT06", "ACT07", "ACT08", "ACT09"]) chassis.append(keycapCell(slotId));
   chassis.append(ledCell());
-  if (separate) {
-    chassis.append(keycapCell("ACT10"), keycapCell("ACT11"));
-  } else {
-    // one wide key across the two switches, exactly like the device
-    chassis.append(keycapCell("ACT10_ACT11", { merged: true }));
-  }
+  if (separate) chassis.append(keycapCell("ACT10"), keycapCell("ACT11"));
+  else chassis.append(keycapCell("ACT10_ACT11", { merged: true }));
   chassis.append(keycapCell("ACT12"));
 }
 
 function keycapCell(slotId, { merged = false } = {}) {
-  const layout = app.config?.layout || { slots: {} };
-  const slot = layout.slots?.[slotId] || { keycapId: "" };
+  const slot = app.config?.layout?.slots?.[slotId] || { keycapId: "" };
   const cap = keycap(slot.keycapId || "EMPT1");
   const cell = document.createElement("button");
   cell.className = "cell keycap";
@@ -319,7 +301,7 @@ function keycapCell(slotId, { merged = false } = {}) {
   const plate = document.createElement("span");
   plate.className = "plate";
   plate.dataset.unassigned = String(!slot.keycapId);
-  plate.textContent = cap.legend;
+  plate.innerHTML = iconSvg(cap.icon);
   cell.append(plate);
   cell.addEventListener("click", () => openKeycapDialog(slotId));
   return cell;
@@ -329,7 +311,7 @@ function agentCell(id) {
   const cell = document.createElement("div");
   cell.className = "cell agent";
   cell.dataset.agent = String(id);
-  cell.innerHTML = '<span class="agent-dot"></span><span class="agent-legend"></span>';
+  cell.innerHTML = '<span class="agent-plate"></span>';
   return cell;
 }
 
@@ -348,7 +330,7 @@ function stickCell() {
   cell.className = "cell stick";
   cell.title = "Analog stick";
   cell.setAttribute("aria-label", "Configure analog stick actions");
-  cell.innerHTML = '<span class="stick-housing"><span class="stick-ball"></span></span>';
+  cell.innerHTML = '<span class="housing"><span class="ball"></span></span>';
   cell.addEventListener("click", openStickDialog);
   return cell;
 }
@@ -376,8 +358,7 @@ function openKeycapDialog(slotId) {
 }
 
 function renderKeycapGrid() {
-  const slotId = editing.slotId;
-  const size = slotId === "ACT10_ACT11" ? "double" : "single";
+  const size = editing.slotId === "ACT10_ACT11" ? "double" : "single";
   const query = $("keycap-search").value.trim().toLowerCase();
   const grid = $("keycap-grid");
   grid.innerHTML = "";
@@ -386,8 +367,9 @@ function renderKeycapGrid() {
     const tile = document.createElement("button");
     tile.type = "button";
     tile.className = "keycap-tile";
+    tile.title = cap.label || cap.id;
     tile.setAttribute("aria-pressed", String(cap.id === editing.keycapId));
-    tile.innerHTML = `<span>${cap.legend}</span>`;
+    tile.innerHTML = iconSvg(cap.icon);
     tile.addEventListener("click", () => {
       editing.keycapId = cap.id;
       editing.action = actionFromOtherSlot(cap.id);
@@ -399,11 +381,11 @@ function renderKeycapGrid() {
   }
 }
 
-/** The app copies whatever action another slot has already bound to this keycap. */
+/** The app copies whatever action another slot already bound to this keycap. */
 function actionFromOtherSlot(keycapId) {
   for (const [slotId, slot] of Object.entries(app.config.layout.slots || {})) {
-    if (slotId === editing.slotId) continue;
-    if (slot.keycapId === keycapId && (slot.action || slot.commandId)) return slot.action || null;
+    if (slotId === editing.slotId || slot.keycapId !== keycapId) continue;
+    if (slot.action || slot.commandId) return slot.action || null;
   }
   return null;
 }
@@ -411,60 +393,42 @@ function actionFromOtherSlot(keycapId) {
 function renderActionPicker() {
   const select = $("keycap-action");
   select.innerHTML = "";
-  const defaultOption = document.createElement("option");
-  defaultOption.value = "";
-  defaultOption.textContent = "Use keycap default";
-  select.append(defaultOption);
-
-  const textOption = document.createElement("option");
-  textOption.value = "composer-text";
-  textOption.textContent = "Insert text…";
-  select.append(textOption);
-
+  const options = [["", "Use keycap default"], ["composer-text", "Insert text…"]];
   const commands = new Map();
   for (const cap of KEYCAPS) if (cap.command) commands.set(cap.command, cap.label);
-  for (const [command, label] of commands) {
+  for (const [command, label] of commands) options.push([`command:${command}`, label]);
+  for (const [value, label] of options) {
     const option = document.createElement("option");
-    option.value = `command:${command}`;
+    option.value = value;
     option.textContent = label;
     select.append(option);
   }
-
   const current = editing.action;
-  select.value = !current
-    ? ""
-    : current.type === "composer-text"
-      ? "composer-text"
-      : current.type === "command"
-        ? `command:${current.value}`
-        : "";
-
+  select.value = !current ? "" : current.type === "composer-text" ? "composer-text" : current.type === "command" ? `command:${current.value}` : "";
   $("keycap-text-row").hidden = select.value !== "composer-text";
   $("keycap-text").value = editing.text;
-  $("keycap-action-note").textContent = select.value ? "" : (keycap(editing.keycapId).label || "Keycap default");
+  $("keycap-action-note").textContent = select.value ? "" : keycap(editing.keycapId).label || "";
 }
 
 function commitKeycapEditor() {
   const layout = app.config.layout;
   const slotId = editing.slotId;
-  const selectValue = $("keycap-action").value;
+  const value = $("keycap-action").value;
   const action =
-    selectValue === ""
+    value === ""
       ? null
-      : selectValue === "composer-text"
+      : value === "composer-text"
         ? { type: "composer-text", value: { label: `Insert ${$("keycap-text").value}`, text: $("keycap-text").value } }
-        : { type: "command", value: selectValue.slice("command:".length) };
+        : { type: "command", value: value.slice("command:".length) };
 
   layout.slots = layout.slots || {};
   layout.slots[slotId] = { keycapId: editing.keycapId, commandId: null, action };
 
   // the app clears the same keycap from any other slot it was on
-  const paired = new Set([slotId, layout.separateMicrophoneKeys ? "" : "ACT10_ACT11"]);
+  const keep = new Set([slotId, layout.separateMicrophoneKeys ? "" : "ACT10_ACT11"]);
   for (const [other, slot] of Object.entries(layout.slots)) {
-    if (paired.has(other)) continue;
-    if (slot.keycapId === editing.keycapId && editing.keycapId) {
-      layout.slots[other] = { keycapId: "EMPT1", commandId: null, action: null };
-    }
+    if (keep.has(other) || !editing.keycapId) continue;
+    if (slot.keycapId === editing.keycapId) layout.slots[other] = { keycapId: "EMPT1", commandId: null, action: null };
   }
   saveConfig();
 }
@@ -514,10 +478,9 @@ function openKnobDialog() {
   }
   const note = document.createElement("p");
   note.className = "hint";
-  note.innerHTML =
-    'Click and press-and-hold are not mapped yet — bind <code>encoder:press</code> and <code>encoder:release</code> in <code>' +
-    (app.configPath || "config.json") +
-    "</code>, which the Knob dropdown writes for every other mode.";
+  note.innerHTML = `Click and press-and-hold are not mapped yet — bind <code>encoder:press</code> and <code>encoder:release</code> in <code>${
+    app.configPath || "config.json"
+  }</code>. They exist in every knob mode.`;
   rows.append(note);
   $("mapping-dialog").showModal();
 }
@@ -544,7 +507,7 @@ function openStickDialog() {
 // ------------------------------------------------------------------- wiring
 
 $("brightness").addEventListener("input", (event) => {
-  setRangeFill(event.target);
+  event.target.style.setProperty("--fill", `${event.target.value}%`);
   $("brightness-readout").textContent = `${event.target.value}%`;
 });
 $("brightness").addEventListener("change", (event) => {
@@ -559,6 +522,7 @@ $("auto-off").addEventListener("change", (event) => {
 
 $("encoder-mode").addEventListener("change", (event) => {
   app.config.layout.encoderMode = event.target.value;
+  renderDynamic();
   if (event.target.value === "custom") {
     renderChassis();
     openKnobDialog();
@@ -590,7 +554,7 @@ $("rescan").addEventListener("click", async () => {
 });
 
 $("copy-port").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(`codex-micro-backend send "agent 0 working"`);
+  await navigator.clipboard.writeText('codex-micro-backend send "agent 0 working"');
   toast("Example command copied");
 });
 
@@ -606,7 +570,7 @@ $("keycap-form").addEventListener("submit", (event) => {
 $("reset-layout").addEventListener("click", () => {
   confirmDialog(
     "Reset keyboard layout?",
-    "This restores the command keys and analog stick to their default assignments without changing your agent key state.",
+    "This restores the command keys and analog stick to their default assignments without changing your agent key mode or custom chat assignments",
     "Reset layout",
     () => {
       app.config.layout = { ...app.config.layout, ...defaultLayout() };
@@ -629,13 +593,16 @@ function defaultLayout() {
   ]) {
     slots[slot] = { keycapId: cap, commandId: null, action: null };
   }
-  const analogStick = {
-    up: { type: "command", value: "composer.togglePlanMode" },
-    right: { type: "command", value: "navigateForward" },
-    down: { type: "command", value: "toggleSidebar" },
-    left: { type: "command", value: "navigateBack" },
+  return {
+    slots,
+    analogStick: {
+      up: { type: "command", value: "composer.togglePlanMode" },
+      right: { type: "command", value: "navigateForward" },
+      down: { type: "command", value: "toggleSidebar" },
+      left: { type: "command", value: "navigateBack" },
+    },
+    encoder: {},
   };
-  return { slots, analogStick, encoder: {} };
 }
 
 function confirmDialog(title, body, confirmLabel, onConfirm) {

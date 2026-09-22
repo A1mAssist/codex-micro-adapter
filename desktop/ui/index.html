@@ -7,33 +7,27 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="product">
-        <span class="product-name" id="product-name">Codex Micro</span>
-        <span class="chip" id="connection-chip" data-status="not-detected">Not detected</span>
-      </div>
-      <label class="switch" title="Inject real keystrokes into the focused window">
-        <input type="checkbox" id="live-toggle" />
-        <span>Send keystrokes</span>
-      </label>
-    </header>
-
     <main>
+      <h1 class="page-title" id="product-name">Codex Micro</h1>
+
+      <!-- status / lighting card, exactly the app's first card -->
       <section class="card">
         <div class="row">
-          <div>
-            <div class="row-label">Connection</div>
-            <div class="row-note" id="connection-note">Looking for a Codex Micro over USB or Bluetooth.</div>
-          </div>
-          <div class="row-body"><button class="ghost" id="rescan">Rescan</button></div>
+          <div class="row-label">Connection</div>
+          <div class="row-value" id="connection">Not detected</div>
         </div>
-        <div class="row" id="battery-row">
+        <div class="row" id="battery-row" hidden>
           <div class="row-label">Battery</div>
-          <div class="row-body" id="battery">--</div>
-        </div>
-        <div class="row" id="firmware-row">
-          <div class="row-label">Firmware</div>
-          <div class="row-body" id="firmware">--</div>
+          <div class="row-value">
+            <span class="value-inline">
+              <svg width="22" height="12" viewBox="0 0 22 12" aria-hidden="true">
+                <rect x="0.5" y="0.5" width="18" height="11" rx="3" fill="none" stroke="#e7e7ea" />
+                <rect x="20" y="3.75" width="2" height="4.5" rx="1" fill="#e7e7ea" />
+                <rect id="battery-fill" x="2" y="2" width="15" height="8" rx="2" fill="#e7e7ea" />
+              </svg>
+              <span id="battery-text">--</span>
+            </span>
+          </div>
         </div>
         <div class="row">
           <div>
@@ -42,7 +36,7 @@
           </div>
           <div class="row-body row-body-inline">
             <input type="range" id="brightness" min="0" max="100" step="10" value="100" />
-            <output class="readout" id="brightness-readout">100%</output>
+            <span class="readout" id="brightness-readout">100%</span>
           </div>
         </div>
         <div class="row">
@@ -56,59 +50,91 @@
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-head">
+      <!-- Layout: heading and action sit outside the card, like the app -->
+      <section class="section">
+        <div class="section-head">
           <h2>Layout</h2>
           <button class="ghost" id="reset-layout">Reset layout</button>
         </div>
-        <div class="preview"><div class="chassis" id="chassis"></div></div>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><h2>Options</h2></div>
-        <div class="row">
-          <div>
-            <div class="row-label">Knob</div>
-            <div class="row-note" id="knob-note">Choose what turning the knob controls</div>
-          </div>
-          <div class="row-body"><select id="encoder-mode"></select></div>
-        </div>
-        <div class="row">
-          <div>
-            <div class="row-label">Use separate microphone keys</div>
-            <div class="row-note">Map the two switches beneath the wide key separately</div>
-          </div>
-          <div class="row-body">
-            <label class="switch"><input type="checkbox" id="separate-mic" /><span></span></label>
-          </div>
+        <div class="card preview-card">
+          <div class="chassis" id="chassis"></div>
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-head"><h2>Harness</h2></div>
-        <div class="row">
-          <div>
-            <div class="row-label">Target client</div>
-            <div class="row-note">Which client the keys type into, and which plugin reports agent key state back</div>
+      <section class="section">
+        <div class="section-head"><h2>Options</h2></div>
+        <div class="card">
+          <div class="row">
+            <div>
+              <div class="row-label">Agent keys</div>
+              <div class="row-note">Choose what the six agent keys follow</div>
+            </div>
+            <div class="row-body"><select id="harness"></select></div>
           </div>
-          <div class="row-body"><select id="harness"></select></div>
+          <div class="row">
+            <div>
+              <div class="row-label">Knob</div>
+              <div class="row-note" id="knob-note">Choose what turning the knob controls</div>
+            </div>
+            <div class="row-body"><select id="encoder-mode"></select></div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="row-label">Microphone key</div>
+              <div class="row-note">Choose how the microphone key works</div>
+            </div>
+            <div class="row-body"><select id="mic-mode"></select></div>
+          </div>
+          <div class="row">
+            <div>
+              <div class="row-label">Use separate microphone keys</div>
+              <div class="row-note">Map the two switches beneath the wide key separately</div>
+            </div>
+            <div class="row-body">
+              <label class="switch"><input type="checkbox" id="separate-mic" /><span></span></label>
+            </div>
+          </div>
         </div>
-        <div class="row">
-          <div>
-            <div class="row-label">Control socket</div>
-            <div class="row-note">Any client can push state here: <code>codex-micro-backend send "agent 0 working"</code></div>
+      </section>
+
+      <!-- the adapter's own plumbing: same card language as the app's rows -->
+      <section class="section">
+        <div class="section-head"><h2>Adapter</h2></div>
+        <div class="card">
+          <div class="row">
+            <div>
+              <div class="row-label">Send keystrokes</div>
+              <div class="row-note">Off means dry run: key presses are logged here but nothing is typed into another window</div>
+            </div>
+            <div class="row-body">
+              <label class="switch"><input type="checkbox" id="live-toggle" /><span></span></label>
+            </div>
           </div>
-          <div class="row-body">
-            <code class="inline" id="control-port">127.0.0.1:27700</code>
-            <button class="ghost" id="copy-port">Copy</button>
+          <div class="row">
+            <div>
+              <div class="row-label">Control socket</div>
+              <div class="row-note">
+                Any client can push state here: <code>codex-micro-backend send "agent 0 working"</code>
+              </div>
+            </div>
+            <div class="row-body">
+              <code class="inline" id="control-port">127.0.0.1:27700</code>
+              <button class="ghost" id="copy-port">Copy</button>
+            </div>
           </div>
+          <div class="row">
+            <div>
+              <div class="row-label">Config</div>
+              <div class="row-note" id="config-path"></div>
+            </div>
+            <div class="row-body"><button class="ghost" id="rescan">Rescan device</button></div>
+          </div>
+          <div class="agent-keys" id="agent-keys"></div>
+          <details>
+            <summary>Activity</summary>
+            <pre id="log"></pre>
+          </details>
         </div>
-        <div class="hint" id="harness-hint"></div>
-        <div class="agent-keys" id="agent-keys"></div>
-        <details>
-          <summary>Activity</summary>
-          <pre id="log"></pre>
-        </details>
       </section>
     </main>
 
@@ -170,6 +196,6 @@
     </dialog>
 
     <div class="toast" id="toast" hidden></div>
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

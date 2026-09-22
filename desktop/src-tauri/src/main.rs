@@ -171,6 +171,9 @@ fn host_loop(
         config.lighting(),
     );
 
+    // Agent keys follow whatever the plugins push; "off" mutes them.
+    let mut agent_keys = config.harness != "off";
+
     loop {
         for message in ui.try_iter() {
             match message {
@@ -178,6 +181,7 @@ fn host_loop(
                     host.apply(command);
                 }
                 UiMessage::Save(config) => {
+                    agent_keys = config.harness != "off";
                     host.set_bindings(config.bindings.clone());
                     host.device.set_layout(config.layout.clone());
                     host.set_lighting(config.lighting(), config.brightness_percent);
@@ -186,6 +190,10 @@ fn host_loop(
             }
         }
         for command in queue.drain() {
+            if !agent_keys && matches!(command, Command::Agent { .. }) {
+                println!("[ctl] ignored (agent keys off)");
+                continue;
+            }
             let reply = host.apply(command);
             println!("[ctl] {reply}");
         }
