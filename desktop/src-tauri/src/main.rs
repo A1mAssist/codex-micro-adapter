@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::{Manager, State};
+
+mod vendor;
 
 /// What the window asks the worker thread to do.
 enum UiMessage {
@@ -28,6 +30,8 @@ enum UiMessage {
 
 struct App {
     ui: Mutex<Sender<UiMessage>>,
+    /// Port serving the app's own renderer bundle, when it has been extracted.
+    vendor_port: Option<u16>,
     snapshot: Arc<Mutex<Snapshot>>,
     config: Mutex<Config>,
     config_path: PathBuf,
@@ -86,6 +90,33 @@ fn set_live(app: State<App>, live: bool) -> Status {
     build_status(&app)
 }
 
+/// Is the app's own settings page available to open?
+#[tauri::command]
+fn vendor_available(app: State<App>) -> bool {
+    app.vendor_port.is_some()
+}
+
+/// Opens the ChatGPT app's own Codex Micro settings page, served from the
+/// extracted bundle, in its own window.
+#[tauri::command]
+fn open_vendor_page(app_handle: tauri::AppHandle, app: State<App>) -> Result<String, String> {
+    let port = app
+        .vendor_port
+        .ok_or("the app's webview bundle was not extracted - run: node scripts/extract-vendor-webview.mjs")?;
+    let url = format!("http://127.0.0.1:{port}/settings/codex-micro");
+    if let Some(window) = app_handle.get_webview_window("vendor") {
+        let _ = window.set_focus();
+        return Ok(url);
+    }
+    let parsed = url.parse().map_err(|e| format!("bad url: {e}"))?;
+    tauri::WebviewWindowBuilder::new(&app_handle, "vendor", tauri::WebviewUrl::External(parsed))
+        .title("Codex Micro - app settings page")
+        .inner_size(1240.0, 900.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(url)
+}
+
 #[cfg(windows)]
 #[tauri::command]
 fn devices() -> Vec<codex_micro_backend::hid_windows::HidDeviceInfo> {
@@ -121,9 +152,26 @@ fn main() {
         ),
     }
 
+    // The app's own renderer bundle, when scripts/extract-vendor-webview.mjs has
+    // been run. Its settings page is what the "app settings page" button opens.
+    let vendor_port = match vendor::root() {
+        Some(root) => match vendor::serve(root) {
+            Ok(port) => {
+                println!("app webview on 127.0.0.1:{port}");
+                Some(port)
+            }
+            Err(err) => {
+                eprintln!("app webview unavailable: {err}");
+                None
+            }
+        },
+        None => None,
+    };
+
     tauri::Builder::default()
         .manage(App {
             ui: Mutex::new(ui_tx),
+            vendor_port,
             snapshot,
             config: Mutex::new(config),
             config_path,
@@ -134,8 +182,21 @@ fn main() {
             apply,
             save_config,
             set_live,
-            devices
+            devices,
+            vendor_available,
+            open_vendor_page
         ])
+        .setup(move |app_handle| {
+            // CODEX_MICRO_VENDOR=1 opens the app's own page straight away, which
+            // is how the port is checked while the bridge is being written.
+            if std::env::var("CODEX_MICRO_VENDOR").is_ok() && vendor_port.is_some() {
+                let state = app_handle.state::<App>();
+                if let Ok(url) = open_vendor_page(app_handle.handle().clone(), state) {
+                    println!("opened {url}");
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Codex Micro");
 }
