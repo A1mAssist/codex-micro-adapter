@@ -1,7 +1,8 @@
 # Codex Micro Adapter
 
-Use the Work Louder **Codex Micro** keyboard with any coding agent — Claude Code,
-the Codex CLI, Cursor, or anything else that runs in a window.
+Use the Work Louder **Codex Micro** keyboard with any coding agent - Claude Code,
+the Codex CLI, pi, opencode, DeepSeek Harness, or anything else that runs in a
+window.
 
 The ChatGPT/Codex desktop app drives this keyboard through a private front end.
 This project is a standalone host that speaks the same device protocol and
@@ -10,19 +11,22 @@ stick, the knob, the microphone key, the lighting derivation behind them, and
 the settings page that configures all of it.
 
 ```
-desktop/           Tauri app: settings surface + embedded host
-backend/           Rust: HID framing, JSON-RPC, layout, lighting, actions
+desktop/               Tauri app: settings surface + embedded host
+backend/               Rust: HID framing, JSON-RPC, layout, lighting, actions
 plugins/codex-micro/   Claude Code + Codex CLI plugin that reports session state
 plugins/pi/            pi extension: harness events -> agent keys
 plugins/opencode/      opencode plugin: harness events -> agent keys
-plugins/deepseek/      DeepSeek Harness native Cordis plugin
-presets/           per-harness binding maps for the Micro keys
-docs/PROTOCOL.md   the wire protocol, as reverse-engineered
+plugins/deepseek/      DeepSeek Harness Cordis plugin: harness seams -> keys,
+                       plus a browser half that opens the session you tapped
+presets/               per-harness binding maps for the Micro keys
+docs/HARNESSES.md      what each harness lights, event by event
+docs/PROTOCOL.md       the wire protocol, as reverse-engineered
 ```
 
 > 中文速览：`desktop` 是 Tauri 前端 + 内嵌 Rust 宿主，界面照搬 ChatGPT App 里的
-> Codex Micro 设置页；`backend` 是设备协议、按键映射和灯光推导的 Rust 复刻；
-> `plugins/claude-code` 是把 Claude Code 状态推给键盘的插件。键盘按键默认只
+> Codex Micro 设置页；`backend` 是设备协议、按键映射和灯光推导的 Rust 复刻。
+> `plugins/` 里是五个 harness 的适配器（Claude Code、Codex CLI、pi、opencode、
+> dsh），装法见下面的 [Harness setup](#harness-setup)。键盘按键默认只
 > **记录日志**，打开界面右上角 “Send keystrokes” 才会真正模拟按键。
 
 ## What carries over
@@ -68,10 +72,125 @@ enable **Send keystrokes** in the app or pass `--live` on the console.
 Tests: `cargo test` — framing, RPC, layout, lighting, actions, the knob's
 click/hold gestures, the device state machine and the control protocol. The
 harness adapters have their own check: `node scripts/check-harness-adapters.mjs`
-feeds the pi extension and the opencode plugin real events and reads the lines
-they send.
+feeds the pi extension, the opencode plugin, the dsh plugin seams and the dsh
+browser half real events and reads the lines they send.
 
-## Pointing it at another harness
+## Harness setup
+
+The host is harness-agnostic; each agent needs one adapter that reports its
+sessions. Five ship here. Start the host first (`codex-micro-desktop`, or
+`codex-micro-backend run --live` for the console one), then install the adapter
+for whichever agent you use. Every adapter talks to `127.0.0.1:27700`; set
+`CODEX_MICRO_PORT` to point them somewhere else.
+
+| Harness | Adapter | Agent keys |
+| --- | --- | --- |
+| [Claude Code](#claude-code) | marketplace plugin | 8 hooks; `SessionEnd` releases the key |
+| [Codex CLI](#codex-cli) | marketplace plugin | 7 hooks; an untrusted run never arrives |
+| [pi](#pi) | extension file | extension events; shutdown releases the key |
+| [opencode](#opencode) | plugin file | session + permission events |
+| [dsh](#deepseek-harness-dsh) | native Cordis plugin | seams, incl. approval and session end; page navigation |
+
+Event-to-state tables for all five: [`docs/HARNESSES.md`](docs/HARNESSES.md).
+
+### Claude Code
+
+```bash
+claude plugin marketplace add A1mAssist/codex-micro-adapter
+claude plugin install codex-micro@codex-micro-adapter
+```
+
+`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Notification`, `Stop`,
+`PreCompact` and `SessionEnd` light that session's own key; the hook forwards the
+`session_id` from the payload and the host hands out a free key, so six terminals
+need no per-shell setup (`CODEX_MICRO_AGENT=0..5` pins one when you want it).
+Needs Node.js on `PATH`. Keystrokes: [`presets/claude-code.json`](presets/claude-code.json) -
+submit `enter`, approve `enter`, reject `escape`, plan mode `shift+tab`.
+
+### Codex CLI
+
+```powershell
+codex plugin marketplace add A1mAssist/codex-micro-adapter
+codex plugin add codex-micro@codex-micro-adapter
+```
+
+The first interactive run shows **Hooks need review** - choose *Trust all and
+continue*. An untrusted hook runs inside Codex's sandbox where it cannot reach the
+host, so the keys stay dark; `codex exec` can bypass the prompt for one run with
+`--dangerously-bypass-hook-trust`. Codex has no `Notification` hook, so
+`PermissionRequest` is what turns a key orange. Keystrokes:
+[`presets/codex-cli.json`](presets/codex-cli.json) - approve `y`, deny `d`,
+reasoning `alt+,` / `alt+.`.
+
+### pi
+
+pi has no hook config; its extension API is the surface.
+
+```powershell
+New-Item -ItemType Directory -Force ~\.pi\agent\extensions
+Copy-Item plugins\pi\codex-micro.ts ~\.pi\agent\extensions\
+```
+
+That covers every project; `<repo>\.pi\extensions\` does one project instead
+(and needs project trust). Session start, a submitted prompt, tool calls,
+approval prompts and shutdown light the key. Keystrokes:
+[`presets/pi.json`](presets/pi.json) - submit `enter`, approve `enter`, reject
+`escape`.
+
+### opencode
+
+opencode runs plugins in-process, loaded from a directory:
+
+```powershell
+New-Item -ItemType Directory -Force ~\.config\opencode\plugins
+Copy-Item plugins\opencode\codex-micro.ts ~\.config\opencode\plugins\
+```
+
+`.opencode\plugins\` inside a project does the same for one project.
+`session.created`, `session.idle`, `permission.asked` and `session.deleted` are
+mapped. Keystrokes: [`presets/opencode.json`](presets/opencode.json) - submit
+`enter`, interrupt `escape`.
+
+### DeepSeek Harness (dsh)
+
+`dsh` also has a Codex-style hooks bridge, but that bridge drops
+`PermissionRequest` and has no `SessionEnd`, so this adapter is a native Cordis
+plugin instead. It is a folder, not a published package - point `dsh` at your
+clone:
+
+```powershell
+npx @deepseek-ai/dsh plugin --profile web add <REPO>/plugins/deepseek/plugin
+```
+
+```yaml
+# %USERPROFILE%\.dsh\profiles\web\cordis.patch.yml
+- insert:
+    - id: codex-micro
+      name: 'codex-micro-dsh'
+```
+
+The `id` is required - `dsh` rejects a bare `- name:` entry with
+`patch: id is required for non-insert patches`. Repeat for the `acp` profile if
+you drive `dsh` from an editor.
+
+The plugin's browser half is what makes an agent key **switch the conversation
+in the page**, which no other harness needs: `dsh` has no per-session URL and no
+switch shortcut, so the page polls the host for the tap and calls
+`uiWorkspace.openSession()`. That poll is why the host has a `GET /activation`
+endpoint; if you moved the host, edit the `HOST` constant in
+`plugins/deepseek/plugin/client.js` to match. Full notes and limits:
+[`plugins/deepseek/README.md`](plugins/deepseek/README.md).
+
+### Anything else
+
+Any language, any agent: writing `session <id> <status>` to the control port is
+the whole protocol, and `session <id> end` releases the key. See
+[Bindings and the control socket](#bindings-and-the-control-socket) below for
+the command list. Agent-key taps then focus the window that session last
+reported from, and a harness with no window at all can map `agent.focus.<n>`
+instead.
+
+## Bindings and the control socket
 
 Two directions, both harness-agnostic:
 
@@ -131,30 +250,10 @@ States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 `activation` answers `{"seq":N,"session":"<id>"|null}`: the last agent key the
 user tapped, for a harness UI that can jump to that session. A browser cannot
 open a socket, so the same answer is on `GET /activation` of the control port -
-that is what the dsh plugin's browser half polls. Both read a slot the device
-loop writes, so a poll keeps answering while the loop is busy with USB work.
-
-The bundled plugin does this for both Claude Code and Codex CLI:
-
-```bash
-claude plugin marketplace add A1mAssist/codex-micro-adapter
-claude plugin install codex-micro@codex-micro-adapter
-
-codex plugin marketplace add A1mAssist/codex-micro-adapter
-codex plugin add codex-micro@codex-micro-adapter
-```
-
-Session start, prompt submit, tool use, Stop, Notification and session end then
-light that session's own agent key: the hook forwards the session id and the
-host hands out a free key, so six terminals need no per-shell setup at all
-(`CODEX_MICRO_AGENT=0..5` still pins one when you want it). Codex CLI uses the
-same script with its own manifest and hook file — its first run asks you to
-trust the hooks, and an untrusted hook runs sandboxed and never reaches the
-host. See [`plugins/codex-micro`](plugins/codex-micro) for both, plus
-[`plugins/pi`](plugins/pi), [`plugins/opencode`](plugins/opencode) and
-[`plugins/deepseek`](plugins/deepseek) for the other three supported harnesses.
-[`docs/HARNESSES.md`](docs/HARNESSES.md) has the per-harness tables and
-[`presets/`](presets/README.md) the keystroke maps for the Micro keys.
+over HTTP, on the same port, for anything that can only speak to a page. Both
+read a slot the device loop writes, so a poll keeps answering while the loop is
+busy with USB work (a tap that predates the page is not replayed: the first
+answer only says where the sequence stands).
 
 ## Deliberate differences
 
