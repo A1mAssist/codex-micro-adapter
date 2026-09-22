@@ -199,10 +199,12 @@ function renderDynamic() {
       "not-detected": "Not detected",
     }[snapshot.status] || "Not detected";
 
-  $("battery-row").hidden = snapshot.battery == null;
-  if (snapshot.battery != null) {
-    $("battery-text").textContent = `${snapshot.battery}%`;
-    $("battery-fill").setAttribute("width", String(Math.max(1, Math.round((snapshot.battery / 100) * 15))));
+  // the app only shows a battery while the device is connected: no device, no percentage
+  const battery = snapshot.status === "connected" ? snapshot.battery : null;
+  $("battery-row").hidden = battery == null;
+  if (battery != null) {
+    $("battery-text").textContent = `${battery}%`;
+    $("battery-fill").setAttribute("width", String(Math.max(1, Math.round((battery / 100) * 15))));
     $("battery-fill").setAttribute("opacity", snapshot.charging ? "0.55" : "1");
   }
 

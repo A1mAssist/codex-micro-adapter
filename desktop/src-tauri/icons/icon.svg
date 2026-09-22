@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Codex Micro app icon.
+
+    Based on the ChatGPT/Codex desktop app's own Codex Micro shortcut icon
+    (the profile-footer button that opens /settings/codex-micro, `ZQs` in
+    app-initial): a rounded keyboard body, a round knob at the top left,
+    key dots and a wide space bar. Same 16-unit geometry, scaled x69.33.
+
+    Only two things were changed for use as an app icon: the dark chassis
+    tile behind it, and the knob filled with this project's violet accent.
+  -->
+  <rect width="1024" height="1024" rx="224" fill="#131418"/>
+  <g transform="translate(-42.667 -42.667) scale(69.333)" fill="#f4f4f7">
+    <rect x="2.45" y="2.45" width="11.1" height="11.1" rx="1.9"
+          fill="none" stroke="#f4f4f7" stroke-width="0.9"/>
+    <circle cx="5" cy="5" r="1.1" fill="#6f63d9"/>
+    <rect x="7.25" y="4.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="10.25" y="4.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="4.25" y="7.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="7.25" y="7.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="10.25" y="7.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="4.25" y="10.25" width="1.5" height="1.5" rx=".375"/>
+    <rect x="7.25" y="10.25" width="4.5" height="1.5" rx=".375"/>
+  </g>
+</svg>
