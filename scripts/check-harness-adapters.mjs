@@ -128,6 +128,16 @@ if (!seamsCalled.slice(1, 4).every(Boolean)) {
   failures += 1;
 }
 
+// Delegated work must not take one of the six keys.
+for (const header of [{ id: "dsh-sub", origin: "subagent" }, { id: "dsh-deep", delegationDepth: 1 }]) {
+  seam("agent/created", { agent: { session: { header } } });
+  seam("agent/pre-step", { agent: { session: { header } }, messages: [{}] });
+  seam("session/disposed", { header });
+}
+seam("agent/created", { agent: { session: { header: { id: "dsh-main" } } } });
+
+await expect("dsh skips subagents", ["session dsh-main idle"]);
+
 server.close();
 if (failures) {
   console.error(`\n${failures} harness adapter check(s) failed`);

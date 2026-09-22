@@ -49,6 +49,21 @@ exactly as it did before the plugin was mounted. `agent/disposed` is
 deliberately not wired - compaction rebuilds the agent under the same session
 id, and the key belongs to the session.
 
+## Which sessions get a key
+
+Six keys are shared with the other harnesses, so delegated subagents are
+filtered out: their session header is marked (`origin: 'subagent'`, or a
+`delegationDepth` above zero) and they never take a key. That is the same
+marker `dsh` checks itself when it decides whether a session is a subagent.
+
+Tapping an agent key brings that session's window forward. For `dsh` that is
+the browser window the session was last typing in. It cannot open one
+*particular* conversation from outside the page: `dsh` has no per-session deep
+link (the launch token is accepted on `/` only, every other path answers 401)
+and no session-switch shortcut. The only supported route in is a client-side
+plugin calling `uiWorkspace.openSession()`, which needs a host-to-plugin channel
+that does not exist yet.
+
 ## Keyboard
 
 `dsh` is a browser UI whose approval and stop controls are plain buttons with no

@@ -7,7 +7,8 @@
  * This plugin listens on the harness seams directly, so it can do both.
  *
  * Every state is one line on the Codex Micro host's loopback socket; nothing is
- * written anywhere else. A host that is not running is ignored.
+ * written anywhere else. A host that is not running is ignored. Delegated
+ * subagents are skipped: six keys belong to the sessions the user can see.
  *
  * States reported:
  *   agent/created       -> idle
@@ -34,13 +35,28 @@ function agentOf(payload) {
   return payload?.agent ?? payload;
 }
 
+/**
+ * Delegated work is dsh-internal: its session header says so, and it must not
+ * take one of the six agent keys away from something the user is watching.
+ * `delegationDepth` is the same marker `dsh` itself checks; a provider that
+ * builds a child session by hand would only set `parentSession`, which is not
+ * worth a registry lookup here.
+ * ponytail: header flags only, add the `ctx.agents.isOwnedBy` fallback if some
+ * provider ever reports a hand-rolled child session.
+ */
+function isSubagent(thing) {
+  const header = thing?.session?.header ?? thing?.header;
+  return header?.origin === "subagent" || (header?.delegationDepth ?? 0) > 0;
+}
+
 export function apply(ctx, config) {
   const host = config?.host ?? "127.0.0.1";
   // the env var wins so a test (or a second host) can point somewhere else
   const port = Number(process.env.CODEX_MICRO_PORT ?? config?.port ?? 27700);
 
-  const report = (session, status) => {
-    if (!session) return;
+  const report = (thing, status) => {
+    const session = sessionOf(thing);
+    if (!session || isSubagent(thing)) return;
     const socket = net.connect({ host, port });
     socket.on("error", () => {});
     socket.on("connect", () => socket.end(`session ${session} ${status}\n`));
@@ -50,35 +66,35 @@ export function apply(ctx, config) {
   const pass = (next) => (typeof next === "function" ? next() : undefined);
 
   ctx.on("agent/created", (payload) => {
-    report(sessionOf(agentOf(payload)), "idle");
+    report(agentOf(payload), "idle");
   });
 
   ctx.on("agent/pre-step", ({ agent, messages }, next) => {
-    if (messages?.length) report(sessionOf(agent), "working");
+    if (messages?.length) report(agent, "working");
     return pass(next);
   });
 
   ctx.on("tools/pre-execute", (exec, next) => {
-    report(sessionOf(agentOf(exec)), "working");
+    report(agentOf(exec), "working");
     return pass(next);
   });
 
   // We only watch approvals: `next()` keeps the real answerer in charge, so a
   // missing answerer behaves exactly as it did before this plugin was mounted.
   ctx.on("approval/request", (request, next) => {
-    report(sessionOf(agentOf(request)), "awaiting-approval");
+    report(agentOf(request), "awaiting-approval");
     return pass(next);
   });
 
   ctx.on("agent/turn-stopping", (payload) => {
-    report(sessionOf(agentOf(payload)), "unread");
+    report(agentOf(payload), "unread");
   });
 
   // The session owns the agent key, so this is the only "the key is free now"
   // signal: compaction rebuilds the agent under the same session and must not
   // drop a key that is still in use.
   ctx.on("session/disposed", (session) => {
-    report(sessionOf(session), "end");
+    report(session, "end");
   });
 
   ctx.logger?.info?.(`codex-micro: reporting agent keys to ${host}:${port}`);
