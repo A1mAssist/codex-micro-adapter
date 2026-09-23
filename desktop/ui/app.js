@@ -113,7 +113,7 @@ const GESTURE_LABELS = { right: "Turn right", left: "Turn left" };
 const STICK_DIRECTIONS = ["up", "right", "down", "left"];
 const STICK_LABELS = { up: "Up", right: "Right", down: "Down", left: "Left" };
 
-const app = { config: null, snapshot: null, live: false, configPath: "" };
+const app = { config: null, snapshot: null, live: false, configPath: "", version: "" };
 let editing = { slotId: null, keycapId: null, action: null, text: "" };
 
 const $ = (id) => document.getElementById(id);
@@ -148,6 +148,7 @@ async function refresh({ structure = false } = {}) {
     app.snapshot = status.snapshot;
     app.live = status.live;
     app.configPath = status.configPath;
+    app.version = status.version;
     if (structure || !document.querySelector(".cell.keycap")) renderStructure();
     renderDynamic();
   } catch (err) {
@@ -556,6 +557,16 @@ $("rescan").addEventListener("click", async () => {
   toast("Rescanning for the keyboard");
 });
 
+$("about-open").addEventListener("click", () => {
+  renderAbout();
+  $("about-dialog").showModal();
+});
+
+$("about-copy").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(aboutText());
+  toast("Diagnostics copied");
+});
+
 $("copy-port").addEventListener("click", async () => {
   await navigator.clipboard.writeText('codex-micro-backend send "agent 0 working"');
   toast("Example command copied");
@@ -619,6 +630,50 @@ function confirmDialog(title, body, confirmLabel, onConfirm) {
   };
   dialog.addEventListener("close", handler);
   dialog.showModal();
+}
+
+// ------------------------------------------------------------------- about
+
+/** Everything here comes from the host status the rest of the page already reads. */
+function aboutRows() {
+  const snapshot = app.snapshot || {};
+  const config = app.config || {};
+  const connected = snapshot.status === "connected";
+  const transport = snapshot.transport === "bluetooth" ? "Connected - Bluetooth" : "Connected - USB";
+  return [
+    ["Adapter version", app.version || "-"],
+    ["Keyboard", connected ? transport : "Not detected"],
+    ["Firmware", connected && snapshot.firmware ? snapshot.firmware : "-"],
+    ["Agent keys", config.harness === "off" ? "Off" : "Following " + (config.harness || "generic")],
+    ["Control socket", "127.0.0.1:" + (config.controlPort ?? 27700)],
+    ["Config file", app.configPath || "-"],
+  ];
+}
+
+function renderAbout() {
+  $("about-version").textContent = app.version ? "Version " + app.version : "Version -";
+  const rows = $("about-rows");
+  rows.innerHTML = "";
+  for (const [label, value] of aboutRows()) {
+    const line = document.createElement("div");
+    line.className = "about-row";
+    const key = document.createElement("span");
+    key.className = "about-key";
+    key.textContent = label;
+    const val = document.createElement("span");
+    val.className = "about-value";
+    // paths and firmware strings get copied around all day; keep them selectable
+    val.textContent = String(value);
+    line.append(key, val);
+    rows.append(line);
+  }
+}
+
+/** The "Copy diagnostics" payload: the same rows, pasteable into an issue. */
+function aboutText() {
+  const lines = ["Codex Micro Adapter " + (app.version || "unknown")];
+  for (const [label, value] of aboutRows()) lines.push(label + ": " + value);
+  return lines.join("\n");
 }
 
 let toastTimer = null;

@@ -46,6 +46,8 @@ struct Status {
     config: Config,
     live: bool,
     config_path: String,
+    /// The build's own version, for the About sheet.
+    version: String,
 }
 
 fn build_status(app: &App) -> Status {
@@ -54,6 +56,7 @@ fn build_status(app: &App) -> Status {
         config: app.config.lock().unwrap().clone(),
         live: *app.live.lock().unwrap(),
         config_path: app.config_path.display().to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 

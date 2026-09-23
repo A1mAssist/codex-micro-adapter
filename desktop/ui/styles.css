@@ -279,6 +279,61 @@ dialog.sheet header p { margin: 5px 0 0; color: var(--text-secondary); font-size
 dialog.sheet .body { padding: 0 26px; overflow-y: auto; }
 dialog.sheet footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 26px; border-top: 1px solid var(--row-line); }
 
+/* ---------- about ---------- */
+
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0 22px;
+  border-bottom: 1px solid var(--row-line);
+}
+/* the Codex Micro mark: the app's violet plate on the chassis colour */
+.about-mark {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: var(--chassis);
+  border: 1px solid var(--plate-line);
+  position: relative;
+  flex-shrink: 0;
+}
+.about-mark::after {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border-radius: 6px;
+  background: var(--accent-bright);
+}
+.about-name { font-size: 16px; font-weight: 600; }
+.about-version { margin-top: 3px; color: var(--text-secondary); font-size: 13px; }
+
+.about-rows { padding: 8px 0 4px; }
+.about-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--row-line);
+}
+.about-row:last-child { border-bottom: none; }
+.about-key { color: var(--text-secondary); font-size: 13.5px; }
+.about-value {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: right;
+  word-break: break-all;
+  user-select: text;
+}
+
+.about-note {
+  margin: 18px 0 4px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
 .search { display: flex; gap: 10px; padding-bottom: 14px; }
 .search input { flex: 1; }
 
