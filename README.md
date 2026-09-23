@@ -47,6 +47,17 @@ Current ChatGPT-only logic (thread lists, "focus Codex with a single tap",
 macOS Input Monitoring, the app's command registry) is intentionally replaced by
 the control socket and the binding table — see [Deliberate differences](#deliberate-differences).
 
+## Install
+
+Windows 11 x64. Grab the installer from
+[Releases](https://github.com/A1mAssist/codex-micro-adapter/releases) -
+`Codex Micro_0.1.0_x64-setup.exe` (NSIS) or the `.msi` if you deploy by policy.
+Both bundle the host and the settings window, so there is nothing else to
+install except Node.js, which the Claude Code and Codex CLI hooks use.
+
+Then add the adapter for whichever agent you use - see
+[Harness setup](#harness-setup).
+
 ## Build and run
 
 Windows 11, Rust stable. The Tauri app needs the MSVC toolchain; this repository

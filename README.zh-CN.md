@@ -37,6 +37,15 @@ docs/PROTOCOL.md       逆向出来的线上协议
 ChatGPT 专属的那部分逻辑（会话列表、"单击聚焦 Codex"、macOS 输入监控、App 的
 命令注册表）被有意替换成控制 socket 和按键映射表，见[有意的差异](#有意的差异)。
 
+## 安装
+
+Windows 11 x64。到 [Releases](https://github.com/A1mAssist/codex-micro-adapter/releases)
+下载安装包，`Codex Micro_0.1.0_x64-setup.exe`（NSIS），按策略部署的话用 `.msi`。
+宿主和设置窗口都打包在里面了，只需要再装 Node.js —— Claude Code 和 Codex CLI 的
+hook 要用它。
+
+装完之后再按你用的 agent 装上适配器，见[各 harness 的安装](#各-harness-的安装)。
+
 ## 构建与运行
 
 Windows 11、Rust stable。Tauri 应用需要 MSVC 工具链；仓库里带了个辅助脚本，因为

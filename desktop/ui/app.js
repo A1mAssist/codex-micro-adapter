@@ -192,13 +192,18 @@ function renderDynamic() {
   const snapshot = app.snapshot || {};
   const config = app.config || {};
 
-  $("connection").textContent =
+  const connection =
     {
       connected: snapshot.transport === "bluetooth" ? "Connected · Bluetooth" : "Connected",
       detected: "Detected",
-      error: snapshot.error ? `Connection problem` : "Connection problem",
+      error: "Connection problem",
       "not-detected": "Not detected",
     }[snapshot.status] || "Not detected";
+  $("connection").textContent = connection;
+  // the same state, in the title bar: a dark keyboard should be obvious at rest
+  $("status-text").textContent = connection;
+  $("status-dot").dataset.state =
+    snapshot.status === "connected" ? "ok" : snapshot.status === "error" ? "error" : "wait";
 
   // the app only shows a battery while the device is connected: no device, no percentage
   const battery = snapshot.status === "connected" ? snapshot.battery : null;
@@ -272,7 +277,8 @@ function renderHarnessHint() {
   if (!hint) {
     hint = document.createElement("div");
     hint.className = "hint";
-    $("agent-keys").after(hint);
+    // the preview side column: agent key list, then what the harness needs
+    document.querySelector(".preview-side").append(hint);
   }
   hint.innerHTML = HARNESS_HINTS[harness] || HARNESS_HINTS.generic;
 }

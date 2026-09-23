@@ -47,12 +47,41 @@ main {
   gap: 44px;
 }
 
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
 .page-title {
   margin: 0;
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+
+.page-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px 7px 12px;
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.status-dot[data-state="ok"] { background: #2fbf5f; box-shadow: 0 0 8px rgba(47, 191, 95, 0.5); }
+.status-dot[data-state="wait"] { background: #d0a215; }
+.status-dot[data-state="error"] { background: var(--danger); box-shadow: 0 0 8px rgba(255, 77, 94, 0.45); }
 
 /* ---------- cards and rows ---------- */
 
@@ -147,7 +176,24 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ---------- device preview ---------- */
 
-.preview-card { display: flex; justify-content: center; padding: 52px 0; }
+.preview-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  align-items: center;
+  gap: 40px;
+  padding: 34px 32px;
+}
+
+/* the agent key list lives beside the preview instead of below the fold */
+.preview-side { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.preview-side h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
 
 .chassis {
   position: relative;
@@ -156,9 +202,10 @@ input[type="range"]::-webkit-slider-thumb {
   grid-template-rows: repeat(4, 1fr);
   gap: 9px;
   width: 100%;
-  max-width: 420px;
+  max-width: 340px;
   aspect-ratio: 1;
-  padding: 16px;
+  justify-self: center;
+  padding: 14px;
   border-radius: 22px;
   background: var(--chassis);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -334,6 +381,14 @@ dialog.sheet footer { display: flex; justify-content: flex-end; gap: 10px; paddi
   line-height: 1.55;
 }
 
+/* ---------- narrow window ---------- */
+
+@media (max-width: 1040px) {
+  main { padding: 32px 40px 56px; gap: 36px; }
+  .preview-card { grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 28px 24px; }
+  .preview-side { gap: 18px; }
+}
+
 .search { display: flex; gap: 10px; padding-bottom: 14px; }
 .search input { flex: 1; }
 
@@ -363,12 +418,29 @@ dialog.sheet footer { display: flex; justify-content: flex-end; gap: 10px; paddi
 .mapping-label { color: var(--text-secondary); font-size: 14px; }
 .mapping-row select { width: 100%; }
 
-.agent-keys { display: flex; flex-direction: column; gap: 8px; padding: 0 0 18px; }
-.agent-keys .line { display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--text-secondary); }
-.agent-keys .swatch { width: 11px; height: 11px; border-radius: 3px; background: var(--status-color, #2b2b30); }
+.agent-keys { display: flex; flex-direction: column; }
+.agent-keys .line {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 0;
+  border-top: 1px solid var(--row-line);
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+.agent-keys .line:first-child { border-top: none; }
+.agent-keys .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--status-color, #2b2b30);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+  flex-shrink: 0;
+}
 .agent-keys .state { margin-left: auto; color: var(--text-tertiary); }
 
 .hint { color: var(--text-tertiary); font-size: 13px; line-height: 1.55; padding: 0 0 18px; }
+.preview-side .hint { padding: 0; }
 .hint code, code.inline { font-family: var(--mono); font-size: 12px; color: var(--text-secondary); }
 
 details { border-top: 1px solid var(--row-line); padding: 16px 0 20px; }

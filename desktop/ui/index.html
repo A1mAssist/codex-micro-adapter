@@ -8,7 +8,13 @@
   </head>
   <body>
     <main>
-      <h1 class="page-title" id="product-name">Codex Micro</h1>
+      <header class="page-head">
+        <h1 class="page-title" id="product-name">Codex Micro</h1>
+        <div class="page-status">
+          <span class="status-dot" id="status-dot" data-state="unknown" aria-hidden="true"></span>
+          <span class="status-text" id="status-text">Checking</span>
+        </div>
+      </header>
 
       <!-- status / lighting card, exactly the app's first card -->
       <section class="card">
@@ -58,6 +64,12 @@
         </div>
         <div class="card preview-card">
           <div class="chassis" id="chassis"></div>
+          <div class="preview-side">
+            <div>
+              <h3>Agent keys</h3>
+              <div class="agent-keys" id="agent-keys"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -132,7 +144,6 @@
               <button class="ghost" id="rescan">Rescan device</button>
             </div>
           </div>
-          <div class="agent-keys" id="agent-keys"></div>
           <details>
             <summary>Activity</summary>
             <pre id="log"></pre>
