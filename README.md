@@ -50,8 +50,8 @@ the control socket and the binding table — see [Deliberate differences](#delib
 ## Install
 
 Windows 11 x64. Grab the installer from
-[Releases](https://github.com/A1mAssist/codex-micro-adapter/releases) -
-`Codex Micro_0.1.0_x64-setup.exe` (NSIS) or the `.msi` if you deploy by policy.
+[Releases](https://github.com/A1mAssist/codex-micro-adapter/releases) - the
+`setup.exe` (NSIS) for a normal install, or the `.msi` if you deploy by policy.
 Both bundle the host and the settings window, so there is nothing else to
 install except Node.js, which the Claude Code and Codex CLI hooks use.
 

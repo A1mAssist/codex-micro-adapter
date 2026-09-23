@@ -40,9 +40,8 @@ ChatGPT 专属的那部分逻辑（会话列表、"单击聚焦 Codex"、macOS �
 ## 安装
 
 Windows 11 x64。到 [Releases](https://github.com/A1mAssist/codex-micro-adapter/releases)
-下载安装包，`Codex Micro_0.1.0_x64-setup.exe`（NSIS），按策略部署的话用 `.msi`。
-宿主和设置窗口都打包在里面了，只需要再装 Node.js —— Claude Code 和 Codex CLI 的
-hook 要用它。
+下载安装包，普通安装用 `setup.exe`（NSIS），按策略部署用 `.msi`。宿主和设置窗口
+都打包在里面了，只需要再装 Node.js，Claude Code 和 Codex CLI 的 hook 要用它。
 
 装完之后再按你用的 agent 装上适配器，见[各 harness 的安装](#各-harness-的安装)。
 
