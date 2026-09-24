@@ -17,6 +17,8 @@ plugins/pi/            pi 扩展：harness 事件 -> agent 键
 plugins/opencode/      opencode 插件：harness 事件 -> agent 键
 plugins/deepseek/      DeepSeek Harness 的 Cordis 插件：harness 接缝 -> 灯，
                        外加浏览器半边，按下键就打开对应会话
+plugins/deepseek/asr-aliyun/  给 dsh 自带麦克风用的阿里云 DashScope 转写
+                       provider：云端识别，不下载本地模型
 presets/               各 harness 的 Micro 键位映射
 docs/HARNESSES.md      每个 harness 亮什么，按事件列出
 docs/PROTOCOL.md       逆向出来的线上协议
@@ -171,6 +173,11 @@ npx @deepseek-ai/dsh plugin --profile web add <REPO>/plugins/deepseek/plugin
 原因；要是你换了宿主的端口，记得改 `plugins/deepseek/plugin/client.js` 里的 `HOST`
 常量。完整说明和限制见
 [`plugins/deepseek/README.md`](plugins/deepseek/README.md)。
+
+语音输入没法从外部**开始录音**（录音对象活在 React 组件内部），但识别那一步是个服务
+（`ctx.speechToText`）。[`plugins/deepseek/asr-aliyun`](plugins/deepseek/asr-aliyun/README.md)
+往这个接缝上注册了一个阿里云 DashScope provider，把官方自带的本地 SenseVoice 模型换成
+云端转写，key 存在 harness 自己的凭据库里，**不用下载模型**。装法和配置见该插件的 README。
 
 ### 其它 harness
 
