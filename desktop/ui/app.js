@@ -189,6 +189,7 @@ function fill(select, options) {
 }
 
 function renderDynamic() {
+  renderAbout();
   const snapshot = app.snapshot || {};
   const config = app.config || {};
 
@@ -598,10 +599,6 @@ $("rescan").addEventListener("click", async () => {
   toast("Rescanning for the keyboard");
 });
 
-$("about-open").addEventListener("click", () => {
-  renderAbout();
-  $("about-dialog").showModal();
-});
 
 $("about-copy").addEventListener("click", async () => {
   await navigator.clipboard.writeText(aboutText());
@@ -699,6 +696,11 @@ function aboutRows() {
 function renderAbout() {
   $("about-version").textContent = app.version ? "Version " + app.version : "Version -";
   const rows = $("about-rows");
+  // rebuild only when something changed: this runs every poll tick, and wiping
+  // the DOM each time would also clear any text the user is mid-copying
+  const next = aboutRows().map(([label, value]) => `${label}\u0000${value}`).join("\u0001");
+  if (rows.dataset.rows === next) return;
+  rows.dataset.rows = next;
   rows.innerHTML = "";
   for (const [label, value] of aboutRows()) {
     const line = document.createElement("div");

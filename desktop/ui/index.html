@@ -140,7 +140,6 @@
               <div class="row-note" id="config-path"></div>
             </div>
             <div class="row-body">
-              <button class="ghost" id="about-open">About</button>
               <button class="ghost" id="rescan">Rescan device</button>
             </div>
           </div>
@@ -148,6 +147,28 @@
             <summary>Activity</summary>
             <pre id="log"></pre>
           </details>
+        </div>
+      </section>
+      <section class="section" id="about-card">
+        <div class="section-head"><h2>About</h2></div>
+        <div class="card">
+          <div class="about-head">
+            <span class="about-mark" aria-hidden="true"></span>
+            <div>
+              <div class="about-name">Codex Micro Adapter</div>
+              <div class="about-version" id="about-version">Version -</div>
+            </div>
+          </div>
+          <div class="about-rows" id="about-rows"></div>
+          <div class="about-actions">
+            <button class="ghost" id="about-copy">Copy diagnostics</button>
+          </div>
+          <p class="about-note">
+            Independent and unaffiliated with OpenAI or Work Louder. The device protocol,
+            keycap catalogue and lighting rules were reimplemented in Rust from the vendor
+            sources shipped inside the ChatGPT desktop app; no vendor code is redistributed
+            here.
+          </p>
         </div>
       </section>
     </main>
@@ -208,34 +229,7 @@
       </form>
     </dialog>
 
-    <dialog class="sheet" id="about-dialog">
-      <form method="dialog">
-        <header>
-          <h2>About Codex Micro</h2>
-          <p>A standalone host for the Work Louder Codex Micro keyboard</p>
-        </header>
-        <div class="body">
-          <div class="about-head">
-            <span class="about-mark" aria-hidden="true"></span>
-            <div>
-              <div class="about-name">Codex Micro Adapter</div>
-              <div class="about-version" id="about-version">Version -</div>
-            </div>
-          </div>
-          <div class="about-rows" id="about-rows"></div>
-          <p class="about-note">
-            Independent and unaffiliated with OpenAI or Work Louder. The device protocol,
-            keycap catalogue and lighting rules were reimplemented in Rust from the vendor
-            sources shipped inside the ChatGPT desktop app; no vendor code is redistributed
-            here.
-          </p>
-        </div>
-        <footer>
-          <button type="button" class="ghost" id="about-copy">Copy diagnostics</button>
-          <button value="done" class="primary">Done</button>
-        </footer>
-      </form>
-    </dialog>
+
 
     <dialog class="sheet" id="confirm-dialog">
       <form method="dialog" id="confirm-form">

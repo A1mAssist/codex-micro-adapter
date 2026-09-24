@@ -247,7 +247,13 @@ impl<O: Opener> Device<O> {
             Ok(hid) => {
                 let mut client = RpcClient::new(hid);
                 let events = self.handshake(&mut client, &candidate, now);
-                self.client = Some(client);
+                // keep the client only when the handshake succeeded: a half-open
+                // HID handle answers nothing and would wedge the reconnect loop
+                // on `client.is_some()` forever (the keyboard-plugged-in-but-UI-
+                // says-not-detected report)
+                if self.is_connected() {
+                    self.client = Some(client);
+                }
                 events
             }
             Err(err) => {
@@ -607,6 +613,7 @@ mod tests {
 
     struct Rig {
         device: Device<MockOpener>,
+        incoming: Arc<Mutex<VecDeque<[u8; REPORT_LEN]>>>,
         written: Arc<Mutex<Vec<String>>>,
         closed: Arc<AtomicBool>,
     }
@@ -644,13 +651,14 @@ mod tests {
         let written = Arc::new(Mutex::new(Vec::new()));
         let closed = Arc::new(AtomicBool::new(false));
         let opener = MockOpener {
-            incoming,
+            incoming: incoming.clone(),
             written: written.clone(),
             closed: closed.clone(),
             fail: false,
         };
         Rig {
             device: Device::new(opener, layout, LightingModel::default()),
+            incoming,
             written,
             closed,
         }
@@ -733,6 +741,33 @@ mod tests {
         // after the deadline it retries and advances the backoff
         device.connect(t0 + Duration::from_millis(1_100), Some(candidate()));
         assert_eq!(device.reconnect_attempt, 2);
+    }
+
+    #[test]
+    fn a_failed_handshake_does_not_wedge_the_reconnect_loop() {
+        // a transport that opens but never answers: the first connect hands a
+        // zombie client back, which used to block every later attempt on
+        // `client.is_some()` until the app restarted
+        let mut r = rig(&[], Layout::default());
+        let t0 = Instant::now();
+        r.device.connect(t0, Some(candidate()));
+        assert_eq!(r.device.state().status, Status::Error);
+        assert!(r.device.client.is_none(), "the half-open handle must go");
+
+        // once the device answers, the next attempt (after the 1 s backoff)
+        // must reach it and connect
+        let id = 1u16; // the first request id the client allocates
+        let reply = encode(
+            CHANNEL_RPC,
+            format!("{{\"result\":{{\"version\":\"1\"}},\"id\":{id}}}\n").as_bytes(),
+        );
+        r.incoming.lock().unwrap().extend(reply);
+        let events = r.device.connect(t0 + Duration::from_millis(1_100), Some(candidate()));
+        assert!(
+            events.contains(&Event::Connected),
+            "the retry after a failed handshake must be able to connect"
+        );
+        assert!(r.device.is_connected());
     }
 
     #[test]

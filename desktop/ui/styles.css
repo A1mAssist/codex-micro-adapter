@@ -374,6 +374,7 @@ dialog.sheet footer { display: flex; justify-content: flex-end; gap: 10px; paddi
   user-select: text;
 }
 
+.about-actions { padding: 10px 0 0; }
 .about-note {
   margin: 18px 0 4px;
   color: var(--text-tertiary);
