@@ -618,6 +618,12 @@ pub mod tests {
             parse_binding("plugin:turn_interrupt"),
             Some(Step::Plugin(_))
         ));
+        // the preset's slash form carries a second colon and must survive as one
+        // event name, not be mistaken for a key or rejected as malformed
+        assert_eq!(
+            parse_binding("plugin:slash:plan"),
+            Some(Step::Plugin("slash:plan".into()))
+        );
 
         // a name becomes one line in the event feed, so a token with a space or a
         // quote would be ambiguous there
