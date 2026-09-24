@@ -43,8 +43,6 @@ pub enum Action {
     ComposerText { label: String, text: String },
     /// Open a URL.
     ExternalUrl { label: String, url: String },
-    /// Hold to talk.
-    PushToTalk,
     /// A skill invocation bound per slot.
     Skill { skill_name: String },
 }
@@ -60,8 +58,11 @@ enum Kind {
     Command(&'static str),
     ComposerText(&'static str, &'static str),
     ExternalUrl(&'static str, &'static str),
-    /// `named` in the vendor catalog: only meaningful inside the app (MIC).
-    Named(&'static str),
+    /// `named` in the vendor catalog: the app resolves a label internally, while
+    /// out here it becomes an ordinary binding key (`tag`, `label`). The
+    /// microphone is then a key like any other, whose default binding happens to
+    /// be a hold - swapping keycaps or moving it needs no code change.
+    Named(&'static str, &'static str),
     /// `custom-shortcut`: an unbound key the user is expected to map.
     CustomShortcut,
 }
@@ -98,12 +99,12 @@ const KEYCAPS: &[Keycap] = &[
     Keycap {
         id: "MIC",
         size: Size::Double,
-        kind: Kind::Named("Push to talk"),
+        kind: Kind::Named("ptt", "Push to talk"),
     },
     Keycap {
         id: "MIC1",
         size: Size::Single,
-        kind: Kind::Named("Push to talk"),
+        kind: Kind::Named("ptt", "Push to talk"),
     },
     Keycap {
         id: "CODEX",
@@ -406,7 +407,7 @@ pub fn resolve_slot(slot: &SlotConfig) -> Option<Action> {
     }
 
     match cap.kind {
-        Kind::Named(_) => Some(Action::PushToTalk), // MIC / MIC1
+        Kind::Named(tag, _) => Some(Action::Command(tag.to_string())), // MIC / MIC1 -> "ptt"
         Kind::Command(c) => Some(Action::Command(c.to_string())),
         Kind::ComposerText(label, text) => Some(Action::ComposerText {
             label: label.to_string(),
@@ -451,13 +452,17 @@ pub fn slot_for_key(key: &str, separate_microphone_keys: bool) -> Option<&'stati
 pub enum Trigger {
     /// An action that is not tied to a keycap: a stick push, a knob tick, a skill.
     Act(Action),
-    /// A keycap press. The slot (`ACT06`…`ACT12`) is the binding key that wins;
-    /// `action` is the catalogue fallback, and `None` when the keycap carries no
-    /// action of its own (`EMPT1`…). Either way the slot answers to a binding, so
-    /// nothing is swallowed.
+    /// A keycap press or release. The slot (`ACT06`…`ACT12`) is the binding key
+    /// that wins; `action` is the catalogue fallback, and `None` when the keycap
+    /// carries no action of its own (`EMPT1`…). Either way the slot answers to a
+    /// binding, so nothing is swallowed.
+    ///
+    /// `down` is carried because a `hold:` binding needs both edges; a plain
+    /// binding still only fires on the press.
     Keycap {
         slot: String,
         action: Option<Action>,
+        down: bool,
     },
     /// One of the six agent keys was pressed: focus that session's window, or
     /// fall back to the `agent.focus.<n>` binding.
@@ -541,11 +546,17 @@ pub fn resolve_event(event: &HidEvent, layout: &Layout) -> Option<Trigger> {
 
     // The host resolves a keycap through the binding table now, so a slot with
     // no action of its own still reaches it instead of being dropped here.
+    // Releases come through too: a `hold:` binding is driven by both edges, and
+    // which bindings those are is only known to the host.
+    if event.act > 1 {
+        return None;
+    }
     let slot_id = slot_for_key(key, layout.separate_microphone_keys)?;
     let action = layout.slots.get(slot_id).and_then(resolve_slot);
-    (event.act == 1).then(|| Trigger::Keycap {
+    Some(Trigger::Keycap {
         slot: slot_id.to_string(),
         action,
+        down: event.act == 1,
     })
 }
 
@@ -671,8 +682,16 @@ mod tests {
 
     #[test]
     fn mic_keycaps_become_push_to_talk() {
-        assert_eq!(resolve_slot(&slot("MIC")), Some(Action::PushToTalk));
-        assert_eq!(resolve_slot(&slot("MIC1")), Some(Action::PushToTalk));
+        // the microphone is an ordinary key: its keycap resolves to the binding
+        // key `ptt`, and what that key does is a binding, not a keycap property
+        assert_eq!(
+            resolve_slot(&slot("MIC")),
+            Some(Action::Command("ptt".into()))
+        );
+        assert_eq!(
+            resolve_slot(&slot("MIC1")),
+            Some(Action::Command("ptt".into()))
+        );
         // `named` entries with no MIC id resolve via the same branch
         assert_eq!(
             resolve_slot(&slot("EMPT1")),
@@ -733,9 +752,20 @@ mod tests {
             Some(Trigger::Keycap {
                 slot: "ACT06".into(),
                 action: Some(Action::Command("composer.submit".into())),
+                down: true,
             })
         );
-        assert_eq!(resolve_event(&hid("ACT06", 0), &layout), None);
+        // the release is reported too: a `hold:` binding is driven by both edges.
+        // Which bindings those are is the host's business, so the layout passes
+        // every edge through and only drops the rotation codes.
+        assert_eq!(
+            resolve_event(&hid("ACT06", 0), &layout),
+            Some(Trigger::Keycap {
+                slot: "ACT06".into(),
+                action: Some(Action::Command("composer.submit".into())),
+                down: false,
+            })
+        );
         assert_eq!(resolve_event(&hid("ACT06", 2), &layout), None);
     }
 
@@ -751,6 +781,7 @@ mod tests {
             Some(Trigger::Keycap {
                 slot: "ACT11".into(),
                 action: None,
+                down: true,
             })
         );
         // and the same key is the right half of the wide key when they are merged
@@ -759,7 +790,8 @@ mod tests {
             resolve_event(&hid("ACT10", 1), &layout),
             Some(Trigger::Keycap {
                 slot: "ACT10_ACT11".into(),
-                action: Some(Action::PushToTalk),
+                action: Some(Action::Command("ptt".into())),
+                down: true,
             })
         );
         assert_eq!(resolve_event(&hid("ACT11", 1), &layout), None);
@@ -868,7 +900,7 @@ mod tests {
         );
         assert_eq!(
             resolve_slot(&layout.slots["ACT10_ACT11"]),
-            Some(Action::PushToTalk)
+            Some(Action::Command("ptt".into()))
         );
         assert_eq!(
             layout.analog_stick["up"],

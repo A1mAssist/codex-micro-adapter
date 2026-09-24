@@ -45,13 +45,10 @@ Other keys you can bind by hand: `ctrl+o` transcript, `ctrl+t` todos,
 exit, `escape` cancel. Claude's `meta+*` shortcuts (fast mode, model picker,
 thinking toggle) are **unverified on Windows** - bind them only after trying.
 Push-to-talk exists in Claude Code: its own keymap ships `space: voice:pushToTalk`
-in the chat context, so `ACT10`, `ACT11` and `ptt` are all preset to `space`.
-
-ponytail: the adapter sends one press+release per tap, not a held key, which is
-what the rest of the binding table does. Claude Code starts recording on the
-press and falls back to a 200 ms timer when it sees no auto-repeat, so a tap
-there is a very short recording. A real down/up pair needs a hold-aware
-performer; add it when hold-to-talk matters more than one more trait method.
+in the chat context, so `ACT10`, `ACT11` and `ptt` are all preset to
+`hold:space`. It is a real hold - the key goes down on the press, repeats while
+you keep holding it, and comes back up when you let go, which is exactly what
+Claude Code's voice mode listens for.
 
 ## Codex CLI
 

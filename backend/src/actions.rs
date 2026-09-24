@@ -47,6 +47,10 @@ pub enum Step {
     Combo(Combo),
     Text(String),
     Url(String),
+    /// `hold:<combo>`: the key stays down until the key is released. The host
+    /// owns the timing - it repeats the key while it is held, the way a real
+    /// keyboard does - so this is a directive, not something `perform` can do.
+    Hold(Combo),
 }
 
 /// What actually happened, so the host can log or surface it.
@@ -55,12 +59,21 @@ pub enum Outcome {
     Sent(String),
     Unbound(String),
     Failed(String),
+    /// A `hold:` binding, handed back for the host to press, repeat and release.
+    Hold { combo: Combo, down: bool },
+    /// Nothing to do and nothing worth logging - the release of a key whose
+    /// binding is a plain tap.
+    Ignored,
 }
 
 pub trait Performer {
     fn send_combo(&mut self, combo: &Combo) -> Result<(), String>;
     fn type_text(&mut self, text: &str) -> Result<(), String>;
     fn open_url(&mut self, url: &str) -> Result<(), String>;
+    /// Hold the key down without releasing it. Paired with [`Self::key_up`].
+    fn key_down(&mut self, combo: &Combo) -> Result<(), String>;
+    /// Release a key [`Self::key_down`] put down.
+    fn key_up(&mut self, combo: &Combo) -> Result<(), String>;
 }
 
 /// Action key → binding string. Keys are action ids: a command id
@@ -73,12 +86,19 @@ pub struct Bindings {
 }
 
 impl Bindings {
-    /// The two mappings the vendor itself hard-codes, plus nothing else.
+    /// The mappings that hold for any prompt-based harness.
     pub fn defaults() -> Self {
         let mut map = BTreeMap::new();
         // `composer.submit` is the only ChatGPT command with an unambiguous
         // meaning in any prompt-based harness.
         map.insert("composer.submit".to_string(), "enter".to_string());
+        // The microphone keycap resolves to `ptt`, and Claude Code's own keymap
+        // ships `space: voice:pushToTalk`. Anything without a voice key reports
+        // `ptt` as unbound rather than typing a stray space.
+        // ponytail: one harness's key as the default. Move it per harness in the
+        // preset (presets/claude-code.json does), drop it when a second harness
+        // grows a voice key with a different binding.
+        map.insert("ptt".to_string(), "hold:space".to_string());
         Self { map }
     }
 
@@ -133,6 +153,12 @@ pub fn parse_binding(binding: &str) -> Option<Step> {
             return None;
         }
         return Some(Step::Url(url.to_string()));
+    }
+    if let Some(held) = binding.strip_prefix("hold:") {
+        let Some(Step::Combo(combo)) = parse_combo(held) else {
+            return None;
+        };
+        return Some(Step::Hold(combo));
     }
     parse_combo(binding)
 }
@@ -231,7 +257,7 @@ pub fn dispatch(trigger: &Trigger, bindings: &Bindings, performer: &mut dyn Perf
     // With neither bound it falls back to the keycap's own payload (the `:yolo:`
     // text, the OpenAI URL), and failing that it reports its slot by name - an
     // unassigned key is never swallowed.
-    if let Trigger::Keycap { slot, action } = trigger {
+    if let Trigger::Keycap { slot, action, down } = trigger {
         let mut keys = vec![slot.clone()];
         if let Some(action) = action {
             let key = action_key(action);
@@ -239,16 +265,31 @@ pub fn dispatch(trigger: &Trigger, bindings: &Bindings, performer: &mut dyn Perf
                 keys.push(key);
             }
         }
-        if let Some((key, binding)) = keys.iter().find_map(|key| bindings.get(key).map(|b| (key, b)))
-        {
-            return match parse_binding(binding) {
-                Some(step) => perform(&step, performer),
-                None => Outcome::Failed(format!("binding for {key} is malformed: {binding}")),
+        // A release with no binding to run is normal: releasing a plain tap has
+        // nothing to do. It only matters to `hold:`, which is why the binding is
+        // consulted on both edges.
+        let Some((key, binding)) = keys
+            .iter()
+            .find_map(|key| bindings.get(key).map(|b| (key, b)))
+        else {
+            if !*down {
+                return Outcome::Ignored;
+            }
+            return match action.as_ref().and_then(|a| payload(a, performer)) {
+                Some(outcome) => outcome,
+                None => Outcome::Unbound(slot.clone()),
             };
-        }
-        return match action.as_ref().and_then(|a| payload(a, performer)) {
-            Some(outcome) => outcome,
-            None => Outcome::Unbound(slot.clone()),
+        };
+        return match parse_binding(binding) {
+            Some(Step::Hold(combo)) => Outcome::Hold { combo, down: *down },
+            Some(step) => {
+                if !*down {
+                    Outcome::Ignored
+                } else {
+                    perform(&step, performer)
+                }
+            }
+            None => Outcome::Failed(format!("binding for {key} is malformed: {binding}")),
         };
     }
 
@@ -343,6 +384,12 @@ fn perform(step: &Step, performer: &mut dyn Performer) -> Outcome {
                 .open_url(url)
                 .map_or_else(Outcome::Failed, |_| Outcome::Sent(label))
         }
+        // `hold:` never gets here: the keycap path intercepts it and the host
+        // owns the timing. Reaching this would mean a non-keycap binding used it.
+        Step::Hold(combo) => Outcome::Failed(format!(
+            "hold: is only meaningful on a keycap slot, got {}",
+            combo.label
+        )),
     }
 }
 fn arrow(vk: u16, label: &str) -> Combo {
@@ -360,7 +407,7 @@ fn action_key(action: &Action) -> String {
         Action::ComposerText { text, .. } => format!("type:{text}"),
         Action::ExternalUrl { url, .. } => format!("url:{url}"),
         Action::Skill { skill_name } => format!("skill:{skill_name}"),
-        Action::PushToTalk => "ptt".to_string(),
+
     }
 }
 
@@ -373,6 +420,8 @@ pub mod tests {
         pub combos: Vec<String>,
         pub texts: Vec<String>,
         pub urls: Vec<String>,
+        /// Every `key_down` / `key_up`, in order, as `down:label` / `up:label`.
+        pub held: Vec<String>,
     }
 
     impl Performer for Recording {
@@ -386,6 +435,14 @@ pub mod tests {
         }
         fn open_url(&mut self, url: &str) -> Result<(), String> {
             self.urls.push(url.to_string());
+            Ok(())
+        }
+        fn key_down(&mut self, combo: &Combo) -> Result<(), String> {
+            self.held.push(format!("down:{}", combo.label));
+            Ok(())
+        }
+        fn key_up(&mut self, combo: &Combo) -> Result<(), String> {
+            self.held.push(format!("up:{}", combo.label));
             Ok(())
         }
     }
@@ -526,6 +583,95 @@ pub mod tests {
     }
 
     #[test]
+    fn hold_bindings_are_a_syntax_of_their_own() {
+        // any slot can be a hold key - that is the point: the microphone is just
+        // the keycap the default layout happens to put on one
+        let Some(Step::Hold(held)) = parse_binding("hold:ctrl+shift+m") else {
+            panic!("hold: did not parse")
+        };
+        assert!(held.modifiers.ctrl && held.modifiers.shift);
+        assert_eq!(held.vk, 0x4D, "VK_M");
+        assert_eq!(held.label, "ctrl+shift+m");
+
+        let Some(Step::Hold(plain)) = parse_binding("hold:space") else {
+            panic!("hold:space did not parse")
+        };
+        assert!(!plain.modifiers.ctrl, "a bare key is a hold of that key");
+        assert_eq!(plain.vk, 0x20);
+
+        assert!(parse_binding("hold:").is_none(), "empty is malformed");
+        assert!(parse_binding("hold:nosuchkey").is_none());
+        assert!(
+            parse_binding("hold:type:x").is_none(),
+            "holding text is not a thing"
+        );
+    }
+
+    #[test]
+    fn a_hold_binding_hands_both_edges_to_the_host() {
+        let mut bindings = Bindings::defaults();
+        bindings.set("ACT10", "hold:space");
+        let mut performer = Recording::default();
+        let keycap = |down| Trigger::Keycap {
+            slot: "ACT10".into(),
+            action: None,
+            down,
+        };
+
+        // the press and the release both come back as Hold, so the host can put
+        // the key down, repeat it, and let it up again
+        assert!(matches!(
+            dispatch(&keycap(true), &bindings, &mut performer),
+            Outcome::Hold { combo, down: true } if combo.vk == 0x20
+        ));
+        assert!(matches!(
+            dispatch(&keycap(false), &bindings, &mut performer),
+            Outcome::Hold { combo, down: false } if combo.vk == 0x20
+        ));
+        assert!(
+            performer.combos.is_empty(),
+            "the host taps the key, not dispatch"
+        );
+        assert!(
+            performer.held.is_empty(),
+            "the host owns key_down / key_up, dispatch only reports"
+        );
+    }
+
+    #[test]
+    fn a_plain_binding_fires_on_press_and_is_quiet_on_release() {
+        let mut bindings = Bindings::defaults();
+        bindings.set("ACT06", "enter");
+        let mut performer = Recording::default();
+        assert_eq!(
+            dispatch(
+                &Trigger::Keycap {
+                    slot: "ACT06".into(),
+                    action: None,
+                    down: true,
+                },
+                &bindings,
+                &mut performer,
+            ),
+            Outcome::Sent("enter".into())
+        );
+        assert_eq!(
+            dispatch(
+                &Trigger::Keycap {
+                    slot: "ACT06".into(),
+                    action: None,
+                    down: false,
+                },
+                &bindings,
+                &mut performer,
+            ),
+            Outcome::Ignored,
+            "releasing a tap does nothing and says nothing"
+        );
+        assert_eq!(performer.combos, vec!["enter"]);
+    }
+
+    #[test]
     fn a_bare_slot_key_can_be_bound() {
         // the reported bug: separate microphone keys on, ACT11 carries an empty
         // keycap, so the catalogue gives it no action at all. Its slot id is the
@@ -537,6 +683,7 @@ pub mod tests {
             &Trigger::Keycap {
                 slot: "ACT11".into(),
                 action: None,
+                down: true,
             },
             &bindings,
             &mut performer,
@@ -552,6 +699,7 @@ pub mod tests {
             &Trigger::Keycap {
                 slot: "ACT11".into(),
                 action: None,
+                down: true,
             },
             &Bindings::defaults(),
             &mut performer,

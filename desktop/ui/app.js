@@ -369,7 +369,8 @@ function slotBinding(slotId) {
  */
 function slotBindingLabel(slotId, slot) {
   const binding = slotBinding(slotId);
-  if (binding) return binding;
+  // a hold binding reads as "hold space", the way the user thinks of it
+  if (binding) return binding.startsWith("hold:") ? `hold ${binding.slice(5)}` : binding;
   const command = slot?.action?.type === "command" ? slot.action.value : slot?.commandId;
   if (command) return command;
   if (slot?.keycapId === "MIC" || slot?.keycapId === "MIC1") return "push to talk";

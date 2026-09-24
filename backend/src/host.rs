@@ -4,7 +4,7 @@
 //! from a worker thread and mirrors the events into the UI. Everything that is
 //! not "how do I show this" lives here.
 
-use crate::actions::{self, Bindings, Outcome, Performer};
+use crate::actions::{self, Bindings, Combo, Outcome, Performer};
 use crate::control::Command;
 use crate::device::{Candidate, Device, DeviceState, Event, LightingModel, Opener};
 use crate::layout::{self, Action, EncoderMode, Layout, Trigger};
@@ -19,6 +19,91 @@ pub const POLL_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long the knob has to be held before the press counts as a hold. The app
 /// uses the same 500ms (`wn` in `codex-micro-bridge`).
 pub const ENCODER_LONG_PRESS: Duration = Duration::from_millis(500);
+/// How often a `hold:` key repeats while it is down.
+///
+/// ponytail: one fixed rate for every hold. A real keyboard waits 500ms then
+/// repeats about 30x a second; what actually needs the repeat is a harness that
+/// watches for it - Claude Code's push-to-talk gives up 600ms after the press
+/// when no repeat arrives - so 10x a second is enough for both that and typing.
+/// Split into delay + rate if a harness ever cares about the difference.
+pub const HOLD_REPEAT: Duration = Duration::from_millis(100);
+
+/// The key a `hold:` binding currently has down, and when it last repeated.
+///
+/// Kept out of `Host` so the press / repeat / release edges are testable without
+/// a device: the repeat is what a harness watching for auto-repeat needs, and
+/// getting it wrong is silent.
+#[derive(Default)]
+struct HoldState {
+    down: Option<(Combo, Instant)>,
+}
+
+impl HoldState {
+    /// Put a key down. Any previous hold is returned so the caller can release it
+    /// first - two holds at once would leave the first one stuck.
+    fn press(&mut self, combo: Combo, now: Instant) -> Option<Combo> {
+        let previous = self.down.replace((combo, now)).map(|(combo, _)| combo);
+        previous
+    }
+
+    /// The key to repeat right now, if a held key is due.
+    fn repeat(&mut self, now: Instant) -> Option<Combo> {
+        let (combo, last) = self.down.as_mut()?;
+        if now.duration_since(*last) < HOLD_REPEAT {
+            return None;
+        }
+        *last = now;
+        Some(combo.clone())
+    }
+
+    /// Let `combo` up. Only a hold of that same key is released, so a release
+    /// that arrives after the binding changed cannot drop someone else's key.
+    fn release(&mut self, combo: &Combo) -> Option<Combo> {
+        match &self.down {
+            Some((held, _)) if held.vk == combo.vk && held.modifiers == combo.modifiers => {
+                self.down.take().map(|(combo, _)| combo)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whatever is still down, for a device that vanished mid-hold.
+    fn cancel(&mut self) -> Option<Combo> {
+        self.down.take().map(|(combo, _)| combo)
+    }
+}
+
+/// Drive one edge of a `hold:` binding: press it, or let it up.
+///
+/// Split out of `Host` so both edges can be tested against a recording performer
+/// without a device - a key left down is the failure mode that matters here, and
+/// it is silent on real hardware until something else starts auto-repeating.
+fn apply_hold(
+    state: &mut HoldState,
+    performer: &mut dyn Performer,
+    combo: Combo,
+    down: bool,
+) -> Outcome {
+    if down {
+        // two holds at once would leave the first key stuck down
+        if let Some(previous) = state.press(combo.clone(), Instant::now()) {
+            let _ = performer.key_up(&previous);
+        }
+        return match performer.key_down(&combo) {
+            Ok(()) => Outcome::Hold { combo, down },
+            Err(err) => Outcome::Failed(err),
+        };
+    }
+
+    // only release what this binding put down
+    let Some(released) = state.release(&combo) else {
+        return Outcome::Ignored;
+    };
+    match performer.key_up(&released) {
+        Ok(()) => Outcome::Sent(format!("release {}", released.label)),
+        Err(err) => Outcome::Failed(err),
+    }
+}
 
 /// Press state for the knob, so a hold can fire before the release arrives.
 #[derive(Default)]
@@ -71,6 +156,11 @@ impl HostEvent {
             HostEvent::Action(Outcome::Sent(what)) => format!("sent {what}"),
             HostEvent::Action(Outcome::Unbound(key)) => format!("unbound {key}"),
             HostEvent::Action(Outcome::Failed(err)) => format!("failed {err}"),
+            HostEvent::Action(Outcome::Hold { combo, down }) => {
+                format!("{} {}", if *down { "hold" } else { "release" }, combo.label)
+            }
+            // never reaches the log: the host drops it before pushing
+            HostEvent::Action(Outcome::Ignored) => String::new(),
         }
     }
 }
@@ -244,6 +334,8 @@ pub struct Host<O: Opener> {
     last_scan: Option<Instant>,
     log: VecDeque<String>,
     encoder: EncoderHold,
+    /// A `hold:` binding currently down, if any.
+    held: HoldState,
 }
 
 impl<O: Opener> Host<O> {
@@ -269,6 +361,7 @@ impl<O: Opener> Host<O> {
             last_scan: None,
             log: VecDeque::new(),
             encoder: EncoderHold::default(),
+            held: HoldState::default(),
         }
     }
 
@@ -437,6 +530,18 @@ impl<O: Opener> Host<O> {
         // a press whose release never arrives (unplugged mid-hold) must not fire
         if !self.device.is_connected() {
             self.encoder = EncoderHold::default();
+            // and a held key has to come back up, or Windows keeps it down forever
+            if let Some(combo) = self.held.cancel() {
+                let _ = self.performer.key_up(&combo);
+                self.push_log(format!("release {}", combo.label));
+            }
+        }
+        // a held key repeats the way a real keyboard does; harnesses that watch
+        // for the repeat (Claude Code's push-to-talk) need it to keep going
+        if let Some(combo) = self.held.repeat(now) {
+            if let Err(err) = self.performer.key_down(&combo) {
+                self.push_log(format!("failed {err}"));
+            }
         }
         // the app fires the hold 500ms in, without waiting for the release
         if self.encoder.long_due(now) {
@@ -446,6 +551,7 @@ impl<O: Opener> Host<O> {
         for event in self.device.tick(now) {
             events.push(HostEvent::Device(event));
         }
+        events.retain(|event| !matches!(event, HostEvent::Action(Outcome::Ignored)));
         for event in &events {
             self.push_log(event.describe());
         }
@@ -453,9 +559,17 @@ impl<O: Opener> Host<O> {
     }
 
     /// One trigger through the binding table.
+    ///
+    /// A `hold:` binding is stateful - the host presses it, repeats it and
+    /// releases it - so the outcome comes back here rather than being performed
+    /// on the spot.
     fn run(&mut self, trigger: Trigger) -> HostEvent {
-        let outcome = actions::dispatch(&trigger, &self.bindings, self.performer.as_mut());
-        HostEvent::Action(outcome)
+        match actions::dispatch(&trigger, &self.bindings, self.performer.as_mut()) {
+            Outcome::Hold { combo, down } => {
+                HostEvent::Action(apply_hold(&mut self.held, self.performer.as_mut(), combo, down))
+            }
+            other => HostEvent::Action(other),
+        }
     }
 
     fn dispatch(&mut self, event: Event, now: Instant, out: &mut Vec<HostEvent>) {
@@ -539,6 +653,121 @@ mod tests {
         layout.encoder_mode = mode;
         layout.encoder.insert(gesture.to_string(), action);
         layout
+    }
+
+    fn held(label: &str, vk: u16) -> Combo {
+        Combo {
+            modifiers: crate::actions::Modifiers::default(),
+            vk,
+            label: label.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_hold_binding_drives_the_performer_end_to_end() {
+        use crate::actions::tests::Recording;
+
+        let mut state = HoldState::default();
+        let mut performer = Recording::default();
+        let space = held("space", 0x20);
+
+        // press, then the repeats the host emits while it stays down, then release
+        assert!(matches!(
+            apply_hold(&mut state, &mut performer, space.clone(), true),
+            Outcome::Hold { down: true, .. }
+        ));
+        // read the clock after the press: the press is what starts the interval
+        let mut clock = Instant::now();
+        for _ in 0..3 {
+            clock += HOLD_REPEAT;
+            if let Some(combo) = state.repeat(clock) {
+                performer.key_down(&combo).unwrap();
+            }
+        }
+        assert_eq!(
+            apply_hold(&mut state, &mut performer, space.clone(), false),
+            Outcome::Sent("release space".into())
+        );
+
+        assert_eq!(
+            performer.held,
+            vec![
+                "down:space", // the press
+                "down:space", // three repeats, which is what push-to-talk waits for
+                "down:space",
+                "down:space",
+                "up:space", // and exactly one release
+            ]
+        );
+    }
+
+    #[test]
+    fn releasing_a_key_that_is_not_held_does_nothing() {
+        use crate::actions::tests::Recording;
+
+        let mut state = HoldState::default();
+        let mut performer = Recording::default();
+        assert_eq!(
+            apply_hold(&mut state, &mut performer, held("space", 0x20), false),
+            Outcome::Ignored
+        );
+        assert!(performer.held.is_empty(), "nothing was pressed or released");
+    }
+
+    #[test]
+    fn a_hold_presses_then_repeats_at_the_repeat_interval() {
+        let start = Instant::now();
+        let mut state = HoldState::default();
+        assert!(state.press(held("space", 0x20), start).is_none());
+
+        // too soon: a real keyboard does not repeat instantly
+        assert!(state.repeat(start + Duration::from_millis(50)).is_none());
+        assert_eq!(
+            state.repeat(start + HOLD_REPEAT).map(|c| c.label),
+            Some("space".to_string()),
+            "the key repeats, which is what push-to-talk watches for"
+        );
+        assert!(state.repeat(start + HOLD_REPEAT).is_none(), "not twice at once");
+        assert_eq!(
+            state
+                .repeat(start + HOLD_REPEAT + HOLD_REPEAT)
+                .map(|c| c.label),
+            Some("space".to_string())
+        );
+    }
+
+    #[test]
+    fn a_hold_releases_only_its_own_key() {
+        let start = Instant::now();
+        let mut state = HoldState::default();
+        state.press(held("space", 0x20), start);
+
+        // a release for a different key must not drop the held one
+        assert!(state.release(&held("enter", 0x0D)).is_none());
+        assert_eq!(state.cancel().map(|c| c.label), Some("space".to_string()));
+
+        // and the right key releases once, not twice
+        state.press(held("space", 0x20), start);
+        assert_eq!(
+            state.release(&held("space", 0x20)).map(|c| c.label),
+            Some("space".to_string())
+        );
+        assert!(state.release(&held("space", 0x20)).is_none());
+    }
+
+    #[test]
+    fn a_second_hold_releases_the_first() {
+        let start = Instant::now();
+        let mut state = HoldState::default();
+        state.press(held("space", 0x20), start);
+        assert_eq!(
+            state
+                .press(held("m", 0x4D), start + Duration::from_millis(10))
+                .map(|c| c.label),
+            Some("space".to_string()),
+            "the superseded key comes back up instead of sticking"
+        );
+        assert_eq!(state.cancel().map(|c| c.label), Some("m".to_string()));
     }
 
     #[test]

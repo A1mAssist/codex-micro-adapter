@@ -22,6 +22,14 @@ impl Performer for LoggingPerformer {
         println!("[url ] {url}");
         Ok(())
     }
+    fn key_down(&mut self, combo: &Combo) -> Result<(), String> {
+        println!("[down] {}", combo.label);
+        Ok(())
+    }
+    fn key_up(&mut self, combo: &Combo) -> Result<(), String> {
+        println!("[up  ] {}", combo.label);
+        Ok(())
+    }
 }
 
 #[cfg(windows)]
@@ -137,22 +145,45 @@ mod windows_impl {
         Ok(())
     }
 
+    /// The key-down half of a combo: modifiers first, then the key, no release.
+    fn combo_down(combo: &Combo) -> Vec<INPUT> {
+        let mut events = Vec::new();
+        for (enabled, vk) in MODIFIER_VKS {
+            if enabled(&combo.modifiers) {
+                events.push(key_event(vk, 0, 0));
+            }
+        }
+        events.push(key_event(combo.vk, 0, 0));
+        events
+    }
+
+    /// The key-up half, in reverse: the key first, then the modifiers.
+    fn combo_up(combo: &Combo) -> Vec<INPUT> {
+        let mut events = vec![key_event(combo.vk, 0, KEYEVENTF_KEYUP)];
+        for (enabled, vk) in MODIFIER_VKS.into_iter().rev() {
+            if enabled(&combo.modifiers) {
+                events.push(key_event(vk, 0, KEYEVENTF_KEYUP));
+            }
+        }
+        events
+    }
+
     impl Performer for WindowsPerformer {
         fn send_combo(&mut self, combo: &Combo) -> Result<(), String> {
-            let mut events = Vec::new();
-            for (enabled, vk) in MODIFIER_VKS {
-                if enabled(&combo.modifiers) {
-                    events.push(key_event(vk, 0, 0));
-                }
-            }
-            events.push(key_event(combo.vk, 0, 0));
-            events.push(key_event(combo.vk, 0, KEYEVENTF_KEYUP));
-            for (enabled, vk) in MODIFIER_VKS.into_iter().rev() {
-                if enabled(&combo.modifiers) {
-                    events.push(key_event(vk, 0, KEYEVENTF_KEYUP));
-                }
-            }
+            let mut events = combo_down(combo);
+            events.extend(combo_up(combo));
             send(&events)
+        }
+
+        /// Hold the key down. The host repeats this while the key is held, which
+        /// is what a real keyboard does and what harnesses watching for the
+        /// repeat (Claude Code's push-to-talk) expect.
+        fn key_down(&mut self, combo: &Combo) -> Result<(), String> {
+            send(&combo_down(combo))
+        }
+
+        fn key_up(&mut self, combo: &Combo) -> Result<(), String> {
+            send(&combo_up(combo))
         }
 
         fn type_text(&mut self, text: &str) -> Result<(), String> {

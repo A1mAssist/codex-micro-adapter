@@ -232,9 +232,15 @@ when they each want a different key. `ACT10_ACT11` is the slot when *Use
 separate microphone keys* is off; with it on, `ACT10` and `ACT11` are separate
 slots and both are bindable, including `ACT11` even when it carries no keycap.
 
-Binding syntax is deliberately tiny: `mod+mod+key`, `type:<literal text>`, or
-`url:<https url>`. Unbound actions are reported, never swallowed. Defaults are
-almost empty on purpose — inventing keymaps for someone else's tool is guessing.
+Binding syntax is deliberately tiny: `mod+mod+key`, `type:<literal text>`,
+`url:<https url>`, or `hold:<combo>` - a held key, which goes down when you press
+and comes back up when you let go, repeating while it is held the way a real
+keyboard does. Any slot can use any of them, so the microphone is not special:
+it is just a key whose default binding happens to be a hold. Put a `MIC` keycap
+on another slot or bind `hold:...` somewhere else and it works the same.
+
+Unbound actions are reported, never swallowed. Defaults are almost empty on
+purpose — inventing keymaps for someone else's tool is guessing.
 
 **Harness → keyboard.** The host listens on `127.0.0.1:27700` for
 newline-delimited commands, so any hook, script or plugin in any language can
