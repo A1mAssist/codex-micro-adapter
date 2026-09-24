@@ -74,30 +74,49 @@ shortcut. Two things worth knowing:
 
 ## Keyboard
 
-`dsh` is a browser UI whose approval controls are plain buttons with no key
-tokens, so synthesising a keystroke has nothing to aim at. Instead the keyboard
-publishes an event and the page calls the same API its own button calls:
+`dsh` is a browser UI whose controls are plain buttons with no key tokens, so
+synthesising a keystroke has nothing to aim at. Instead the keyboard publishes an
+event and the page calls the same session API `dsh`'s own UI calls:
 
 ```json
 {
   "bindings": {
+    "ACT06": "plugin:slash:plan",
     "ACT07": "plugin:approve",
     "ACT08": "plugin:reject",
+    "ACT09": "plugin:cancel",
     "ACT12": "enter"
   }
 }
 ```
 
-`plugin:approve` / `plugin:reject` answer the pending approval of the session the
-user is **looking at** - the main view has to hold it. An approval waiting in a
-background session is left alone, because answering it would decide something the
-user never saw. The page picks these up by polling `GET /events?since=N` on the
-host's control port, the same way it polls `/activation` for agent-key taps; the
-first poll only baselines the sequence so a tap from before the page loaded is
-not replayed.
+| Event | What the page does |
+| --- | --- |
+| `plugin:approve` / `plugin:reject` | answers the pending approval, `allowed-once` / `rejected` |
+| `plugin:cancel` | `session.cancel()` - stops the running turn; queued work stays and resumes |
+| `plugin:slash:<name>` | `session.command("/<name>")` - any slash command this Host has |
+
+`dsh` registers `plan`, `compact`, `goal`, `permission`, `export` and `feedback`
+as slash commands; a name the Host does not have comes back unmatched rather than
+being quietly swallowed.
+
+Every event acts on the session the user is **looking at** - the main view has to
+hold it. Work in a background session is left alone, because acting on it would
+do something the user never asked for. The page picks events up by polling
+`GET /events?since=N` on the host's control port, the same way it polls
+`/activation` for agent-key taps; the first poll only baselines the sequence, so a
+key pressed before the page loaded is not replayed.
 
 `Enter` still submits a prompt and `Shift+Enter` inserts a newline; `ACT12` maps
 to `enter` because that is a real key.
+
+### Voice input
+
+`dsh`'s voice input (record, transcribe, insert into the draft) is a React
+component's internal state, not a service: the recording object is created inside
+the composer slot and `ctx.slots` exposes only `register`, so another plugin
+cannot reach it. There is therefore no `plugin:` event for it. Enabling the voice
+bundle and clicking the microphone is the only path today.
 
 ## Verify
 

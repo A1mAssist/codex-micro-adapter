@@ -147,11 +147,18 @@ per-session URL (its launch token is accepted on `/` only) and no switch
 shortcut.
 
 On the keyboard side the Web UI's buttons have no key tokens, so this adapter
-uses the other route: a key bound to `plugin:approve` / `plugin:reject` publishes
-an event, and the browser half answers the pending approval through the same API
-the button calls - but only for the session the user is looking at, never one
-waiting in the background. Preset:
-[`presets/dsh.json`](../presets/dsh.json).
+uses the other route: a key bound to `plugin:<event>` publishes an event, and the
+browser half calls the same session API `dsh`'s own UI calls - but only for the
+session the user is looking at, never one in the background.
+
+| Event | What it does |
+| --- | --- |
+| `plugin:approve` / `plugin:reject` | answers the pending approval |
+| `plugin:cancel` | stops the running turn |
+| `plugin:slash:<name>` | runs a slash command (`plan`, `compact`, `goal`, `permission`, `export`, `feedback`) |
+
+Preset: [`presets/dsh.json`](../presets/dsh.json). Voice input is not wired: it
+lives in a React component's own state, which another plugin cannot reach.
 
 ## Check an adapter
 

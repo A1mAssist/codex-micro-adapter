@@ -7,16 +7,23 @@
  *    which one and jumps the page to it. `dsh` has no per-session URL and no
  *    switch shortcut, so the page is the only place that can do the jumping.
  * 2. A key bound to `plugin:<event>` publishes an event instead of typing a
- *    keystroke. `dsh`'s approval controls are plain buttons with no key tokens,
- *    so synthesis has nothing to aim at - but the page can call the same API the
- *    buttons call. `approve` and `reject` answer the pending approval of the
- *    session the user is actually looking at.
+ *    keystroke, and this half calls the same API `dsh`'s own UI calls. That is
+ *    the whole point: a Web UI's controls have no key tokens, so there is nothing
+ *    to type at, but there is a real session API to call.
  *
- * Nothing else is touched: an event this half does not know does nothing.
+ * Events this half understands:
+ *
+ *   approve        answer the pending approval with `allowed-once`
+ *   reject         answer it with `rejected`
+ *   cancel         stop the running turn
+ *   slash:<name>   run the slash command `/name`
+ *
+ * A single session API per event, taken from the session the user is looking at.
+ * Nothing else is touched, and an event this half does not know does nothing.
  */
 export const name = "codex-micro-client";
 
-/** The workspace service jumps; `uiSession` and `sessions` say what is pending. */
+/** The workspace service jumps; `uiSession` says what is pending; `sessions` acts. */
 export const inject = ["uiWorkspace", "uiSession", "sessions"];
 
 /**
@@ -35,27 +42,31 @@ export function apply(ctx) {
   let seenEvents = -1;
 
   /**
-   * The session the user is looking at: the one the main view retains. Answering
-   * a background session's approval would decide something the user never saw,
-   * so an ambiguous page answers nothing at all.
+   * The session the user is looking at: the one the main view retains. Acting on
+   * a background session would do something the user never asked for, so an
+   * ambiguous page does nothing at all. This is `uiSession`'s own `isMain` test.
    */
-  const visibleSession = () => {
+  const currentId = () => {
     const list = ctx.sessions.list.getSnapshot();
-    const statuses = ctx.uiSession.sessionStatus.getSnapshot();
-    for (const [id, status] of statuses) {
-      if (status?.pendingInteraction?.kind !== "approval") continue;
-      // `uiSession`'s own isMain(): the main view holds a reference to what it
-      // shows, and only that session is one the user can answer for
-      if ((list.byId?.[id]?.retainedBy?.mainView ?? 0) > 0) {
-        return status.pendingInteraction;
-      }
+    for (const id of list.ids ?? []) {
+      if ((list.byId?.[id]?.retainedBy?.mainView ?? 0) > 0) return id;
     }
     return undefined;
   };
 
-  const answer = (outcome) => {
-    const pending = visibleSession();
-    if (!pending) return false;
+  /** The live session face, or undefined while that session is not materialized. */
+  const face = () => {
+    const id = currentId();
+    return id === undefined ? undefined : ctx.sessions.binding(id)?.session;
+  };
+
+  const answerApproval = (outcome) => {
+    const id = currentId();
+    const status = id === undefined
+      ? undefined
+      : ctx.uiSession.sessionStatus.getSnapshot().get(id);
+    const pending = status?.pendingInteraction;
+    if (pending?.kind !== "approval") return false;
     try {
       // the same object the approval panel resolves
       pending.answer(outcome);
@@ -67,17 +78,29 @@ export function apply(ctx) {
   };
 
   /** What a `plugin:<event>` binding means to this page. */
-  const act = (event) => {
-    switch (event) {
-      case "approve":
-        return answer("allowed-once");
-      case "reject":
-        return answer("rejected");
-      default:
-        // An event this half does not know is ignored on purpose: another
-        // plugin (or a later version) may own it.
-        return false;
+  const act = async (event) => {
+    if (event === "approve") return answerApproval("allowed-once");
+    if (event === "reject") return answerApproval("rejected");
+
+    const live = face();
+    if (!live) return false;
+
+    if (event === "cancel") {
+      // stop the running turn; queued work stays and resumes after quiescence
+      await live.cancel();
+      return true;
     }
+    if (event.startsWith("slash:")) {
+      const name = event.slice("slash:".length);
+      if (!name) return false;
+      // `matched:false` means this Host has no such command - the caller sees a
+      // failure rather than a silently swallowed key
+      const result = await live.command(`/${name}`);
+      return result?.ok === true && result.value?.matched === true;
+    }
+    // An event this half does not know is ignored on purpose: another plugin (or
+    // a later version) may own it.
+    return false;
   };
 
   const tick = async () => {
@@ -112,13 +135,19 @@ export function apply(ctx) {
     }
     if (!Number.isFinite(feed?.seq)) return;
     if (seenEvents < 0) {
-      // first poll: this page has not seen anything yet, so it must not answer a
-      // request that was tapped before it loaded
+      // first poll: this page has not seen anything yet, so it must not act on a
+      // key that was pressed before it loaded
       seenEvents = feed.seq;
       return;
     }
     seenEvents = feed.seq;
-    for (const event of feed.events ?? []) act(event);
+    for (const event of feed.events ?? []) {
+      try {
+        await act(event);
+      } catch {
+        // one key that could not be carried out must not stop the next one
+      }
+    }
   };
 
   const timer = setInterval(tick, POLL_MS);

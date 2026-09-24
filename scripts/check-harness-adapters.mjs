@@ -160,13 +160,25 @@ const settled = [];
 const pendingFor = (id) => ({ kind: "approval", sessionId: id, answer: (o) => settled.push([id, o]) });
 let statuses = new Map();
 let retained = {};
+/** What reached the session face: `cancel`, then any slash commands. */
+const faceCalls = [];
+const faceFor = () => ({
+  cancel: async () => faceCalls.push("cancel"),
+  command: async (line) => {
+    faceCalls.push(line);
+    return { ok: line !== "/nosuchcommand", value: { matched: line !== "/nosuchcommand" } };
+  },
+});
 
 const dshClient = await import(pathToFileURL(path.join(root, "plugins/deepseek/plugin/client.js")).href);
 const opened = [];
 dshClient.apply({
   uiWorkspace: { openSession: (id) => opened.push(id) },
   uiSession: { sessionStatus: { getSnapshot: () => statuses } },
-  sessions: { list: { getSnapshot: () => ({ byId: retained }) } },
+  sessions: {
+    list: { getSnapshot: () => ({ ids: Object.keys(retained), byId: retained }) },
+    binding: (id) => (retained[id] ? { session: faceFor() } : undefined),
+  },
   effect: (fn) => fn(),
 });
 
@@ -186,12 +198,23 @@ retained = { "dsh-fg": { retainedBy: { mainView: 1 } } };
 feed = { seq: 3, events: ["reject"] };
 await tick();
 
+// the session verbs: cancel, then real slash commands, then one the Host lacks
+feed = { seq: 4, events: ["cancel", "slash:plan", "slash:nosuchcommand"] };
+await tick();
+
 // and an event this half does not know must do nothing at all
-feed = { seq: 4, events: ["somethingelse"] };
+feed = { seq: 5, events: ["somethingelse"] };
 await tick();
 
 globalThis.setInterval = realSetInterval;
 globalThis.fetch = realFetch;
+
+if (JSON.stringify(faceCalls) !== JSON.stringify(["cancel", "/plan", "/nosuchcommand"])) {
+  console.log("FAIL dsh session verbs: " + JSON.stringify(faceCalls));
+  failures += 1;
+} else {
+  console.log("ok   dsh cancels and runs slash commands");
+}
 
 if (afterTap !== "dsh-9") {
   console.log("FAIL dsh page did not follow the tap: " + JSON.stringify(opened));

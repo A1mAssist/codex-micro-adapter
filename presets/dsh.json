@@ -1,7 +1,9 @@
 {
   "bindings": {
+    "ACT06": "plugin:slash:plan",
     "ACT07": "plugin:approve",
     "ACT08": "plugin:reject",
+    "ACT09": "plugin:cancel",
     "ACT12": "enter",
     "composer.submit": "enter"
   }

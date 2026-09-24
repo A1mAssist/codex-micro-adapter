@@ -123,13 +123,22 @@ publishes the event on the host's control port, and the harness's own plugin
 polls `GET /events?since=N` and calls its API.
 
 ```json
-{ "bindings": { "ACT07": "plugin:approve", "ACT08": "plugin:reject" } }
+{
+  "bindings": {
+    "ACT06": "plugin:slash:plan",
+    "ACT07": "plugin:approve",
+    "ACT08": "plugin:reject",
+    "ACT09": "plugin:cancel"
+  }
+}
 ```
 
-`dsh` is the one that ships this today (`presets/dsh.json`). The page answers
-only the approval of the session the user is looking at - never one waiting in
-the background, which the user never saw. `plugin:` events are ignored by a
-harness whose plugin does not know them, so a preset is safe to merge.
+`dsh` is the one that ships this today (`presets/dsh.json`). Its events are
+`approve`, `reject`, `cancel` (stop the running turn) and `slash:<name>` (run a
+slash command - `dsh` registers `plan`, `compact`, `goal`, `permission`, `export`
+and `feedback`). Everything acts on the session the user is looking at, never one
+in the background. `plugin:` events are ignored by a harness whose plugin does
+not know them, so a preset is safe to merge.
 
 ## Not expressible today
 
