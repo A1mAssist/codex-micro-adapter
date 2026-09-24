@@ -228,6 +228,13 @@ function renderDynamic() {
   $("config-path").textContent = app.configPath || "";
   $("knob-note").textContent = knobNote();
 
+  // physical presses echo into the preview: the held slot lights up, plus the
+  // knob or stick while the gesture is down
+  const pressed = new Set(snapshot.pressed || []);
+  for (const cell of document.querySelectorAll(".cell[data-slot], .cell.knob")) {
+    const active = pressed.has(cell.dataset.slot) || (cell.classList.contains("knob") && pressed.has("ENC"));
+    cell.classList.toggle("pressed", active);
+  }
   const slots = new Map((snapshot.slots || []).map((slot) => [slot.id, slot.status]));
   for (const cell of document.querySelectorAll(".cell.agent")) {
     const status = slots.get(Number(cell.dataset.agent)) || "off";

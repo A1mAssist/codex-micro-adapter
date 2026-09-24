@@ -664,6 +664,8 @@ mod tests {
         }
     }
 
+
+
     fn failing_rig() -> Device<MockOpener> {
         let opener = MockOpener {
             incoming: Arc::new(Mutex::new(VecDeque::new())),

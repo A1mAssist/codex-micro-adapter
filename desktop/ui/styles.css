@@ -228,6 +228,12 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .cell.keycap:hover .plate, .cell.knob:hover .knob-face, .cell.stick:hover .housing { border-color: rgba(255, 255, 255, 0.32); }
 .cell.keycap:active .plate { transform: translateY(1px) scale(0.986); }
+/* the physical key is down right now: echo it on the preview */
+.cell.keycap.pressed .plate, .cell.knob.pressed .knob-face {
+  border-color: rgba(111, 99, 217, 0.95);
+  background: rgba(91, 87, 201, 0.30);
+  box-shadow: 0 0 0 1px rgba(111, 99, 217, 0.55), 0 0 14px rgba(111, 99, 217, 0.35);
+}
 .keycap-icon { width: 42%; height: 42%; color: currentColor; }
 .plate[data-unassigned="true"] { color: #6c6c73; }
 

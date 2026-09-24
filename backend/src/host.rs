@@ -194,6 +194,9 @@ pub struct Snapshot {
     pub brightness_percent: u8,
     pub slots: Vec<AgentSlot>,
     pub log: Vec<String>,
+    /// Command slots currently held down on the physical keyboard, so the UI
+    /// preview can echo the press. Agent keys show their status light instead.
+    pub pressed: Vec<String>,
 }
 
 /// Which session owns which agent key.
@@ -339,6 +342,8 @@ pub struct Host<O: Opener> {
     held: HoldState,
     /// Where `plugin:` bindings land, for a harness page to poll.
     events: crate::control::Events,
+    /// Command slots currently held down, mirrored into `Snapshot::pressed`.
+    pressed: std::collections::BTreeSet<String>,
 }
 
 impl<O: Opener> Host<O> {
@@ -366,6 +371,7 @@ impl<O: Opener> Host<O> {
             encoder: EncoderHold::default(),
             held: HoldState::default(),
             events: crate::control::Events::default(),
+            pressed: Default::default(),
         }
     }
 
@@ -430,6 +436,7 @@ impl<O: Opener> Host<O> {
             brightness_percent: self.brightness_percent,
             slots: self.slots.clone(),
             log: self.log.iter().cloned().collect(),
+            pressed: self.pressed.iter().cloned().collect(),
         }
     }
 
@@ -592,6 +599,7 @@ impl<O: Opener> Host<O> {
             out.push(HostEvent::Device(event));
             return;
         };
+        self.track_press(&trigger);
         match trigger {
             // the knob is the only control with a time-based gesture, so its press
             // state lives here and the click fires when a short release lands
@@ -639,6 +647,29 @@ impl<O: Opener> Host<O> {
             other => out.push(self.run(other)),
         }
     }
+/// Mirror a trigger's press state into the set the UI preview reads. Encoder
+/// ticks and stick pushes are momentary, so only the held edges matter.
+fn track_press(&mut self, trigger: &Trigger) {
+    match trigger {
+        Trigger::Keycap { slot, down, .. } => {
+            if *down {
+                self.pressed.insert(slot.clone());
+            } else {
+                self.pressed.remove(slot);
+            }
+        }
+        Trigger::EncoderPress => {
+            self.pressed.insert("ENC".into());
+        }
+        Trigger::EncoderRelease => {
+            self.pressed.remove("ENC");
+        }
+        // agent keys already show their status light; ticks, pushes and clicks
+        // are momentary, and the UI flashes on the log line instead
+        _ => {}
+    }
+}
+
 }
 
 /// What a short knob press means: the layout's own `click` action in custom mode.
@@ -676,6 +707,49 @@ mod tests {
             vk,
             label: label.to_string(),
         }
+    }
+
+    #[test]
+    fn physical_presses_are_mirrored_into_the_snapshot() {
+        // Host::new needs a performer; the host is not connected, so no real
+        // device IO happens here - dispatch is driven by hand.
+        // the device is never polled here, so a tiny opener that always fails
+        // is enough; it exists only so Host::new has something to hold
+        struct NoOpener;
+        impl crate::device::Opener for NoOpener {
+            type Hid = Self;
+            fn open(&mut self, _path: &str) -> Result<Self, String> {
+                Err("no device".into())
+            }
+        }
+        impl crate::rpc::Hid for NoOpener {
+            fn write_report(&mut self, _r: &[u8; crate::framing::REPORT_LEN]) -> std::io::Result<()> {
+                Ok(())
+            }
+            fn read_report(&mut self, _t: std::time::Duration) -> Option<[u8; crate::framing::REPORT_LEN]> {
+                None
+            }
+        }
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            crate::actions::Bindings::default(),
+            Box::new(crate::performer::LoggingPerformer),
+            100,
+            LightingModel::default(),
+        );
+        let now = Instant::now();
+        host.dispatch(
+            Event::Trigger(Trigger::Keycap { slot: "ACT06".into(), action: None, down: true }),
+            now,
+            &mut Vec::new(),
+        );
+        assert!(host.pressed.contains("ACT06"));
+        host.dispatch(
+            Event::Trigger(Trigger::Keycap { slot: "ACT06".into(), action: None, down: false }),
+            now,
+            &mut Vec::new(),
+        );
+        assert!(!host.pressed.contains("ACT06"));
     }
 
     #[test]
