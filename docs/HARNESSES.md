@@ -146,8 +146,12 @@ calls `uiWorkspace.openSession`. The poll is the only route in: `dsh` has no
 per-session URL (its launch token is accepted on `/` only) and no switch
 shortcut.
 
-There is nothing to bind on the keyboard side: approval and stop are plain
-buttons in the Web UI with no key tokens.
+On the keyboard side the Web UI's buttons have no key tokens, so this adapter
+uses the other route: a key bound to `plugin:approve` / `plugin:reject` publishes
+an event, and the browser half answers the pending approval through the same API
+the button calls - but only for the session the user is looking at, never one
+waiting in the background. Preset:
+[`presets/dsh.json`](../presets/dsh.json).
 
 ## Check an adapter
 

@@ -1,0 +1,8 @@
+{
+  "bindings": {
+    "ACT07": "plugin:approve",
+    "ACT08": "plugin:reject",
+    "ACT12": "enter",
+    "composer.submit": "enter"
+  }
+}

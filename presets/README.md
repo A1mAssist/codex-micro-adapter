@@ -30,6 +30,7 @@ keycap editor. Editing `config.json` by hand works exactly the same.
 | `codex-cli.json` | codex-cli 0.155.0-alpha.9.2's own keymap strings + upstream source at that tag |
 | `pi.json` | `packages/coding-agent/docs/keybindings.md` |
 | `opencode.json` | `keybinds.mdx` |
+| `dsh.json` | the installed `@deepseek-ai/dsh` approval service, not a keymap |
 
 ## Claude Code
 
@@ -113,6 +114,22 @@ switch keys if you have a better idea for your setup.
 
 `codex-micro-backend window` prints the window that has focus right now, and
 `window --focus <hwnd>` exercises the focus call.
+
+## Harnesses with no keys: `plugin:`
+
+A Web UI whose controls are plain buttons has nothing to synthesise a keystroke
+for. Those harnesses take the other route: a slot bound to `plugin:<event>`
+publishes the event on the host's control port, and the harness's own plugin
+polls `GET /events?since=N` and calls its API.
+
+```json
+{ "bindings": { "ACT07": "plugin:approve", "ACT08": "plugin:reject" } }
+```
+
+`dsh` is the one that ships this today (`presets/dsh.json`). The page answers
+only the approval of the session the user is looking at - never one waiting in
+the background, which the user never saw. `plugin:` events are ignored by a
+harness whose plugin does not know them, so a preset is safe to merge.
 
 ## Not expressible today
 

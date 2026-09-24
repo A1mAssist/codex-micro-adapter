@@ -74,9 +74,30 @@ shortcut. Two things worth knowing:
 
 ## Keyboard
 
-`dsh` is a browser UI whose approval and stop controls are plain buttons with no
-key tokens, so there is nothing honest to bind - this adapter only drives the
-lights. (`Enter` submits a prompt, `Shift+Enter` inserts a newline.)
+`dsh` is a browser UI whose approval controls are plain buttons with no key
+tokens, so synthesising a keystroke has nothing to aim at. Instead the keyboard
+publishes an event and the page calls the same API its own button calls:
+
+```json
+{
+  "bindings": {
+    "ACT07": "plugin:approve",
+    "ACT08": "plugin:reject",
+    "ACT12": "enter"
+  }
+}
+```
+
+`plugin:approve` / `plugin:reject` answer the pending approval of the session the
+user is **looking at** - the main view has to hold it. An approval waiting in a
+background session is left alone, because answering it would decide something the
+user never saw. The page picks these up by polling `GET /events?since=N` on the
+host's control port, the same way it polls `/activation` for agent-key taps; the
+first poll only baselines the sequence so a tap from before the page loaded is
+not replayed.
+
+`Enter` still submits a prompt and `Shift+Enter` inserts a newline; `ACT12` maps
+to `enter` because that is a real key.
 
 ## Verify
 

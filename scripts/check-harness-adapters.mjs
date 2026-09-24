@@ -139,7 +139,7 @@ seam("agent/created", { agent: { session: { header: { id: "dsh-main" } } } });
 await expect("dsh skips subagents", ["session dsh-main idle"]);
 
 // --- dsh browser half ------------------------------------------------------
-// The page half polls the keyboard host; here the poll and the clock are fakes.
+// The page poll, the clock and the two stores the page reads are all fakes here.
 let tick;
 const realSetInterval = globalThis.setInterval;
 const realFetch = globalThis.fetch;
@@ -147,21 +147,48 @@ globalThis.setInterval = (fn) => {
   tick = fn;
   return 0;
 };
-let answer = { seq: 1, session: null };
-globalThis.fetch = async () => ({ json: async () => answer });
+
+let activation = { seq: 1, session: null };
+let feed = { seq: 0, events: [] };
+globalThis.fetch = async (url) => ({
+  // the page must ask for both endpoints, and pass the since it was given
+  json: async () => (String(url).includes("/events") ? feed : activation),
+});
+
+/** One approval waiting in the main view, one in a background session. */
+const settled = [];
+const pendingFor = (id) => ({ kind: "approval", sessionId: id, answer: (o) => settled.push([id, o]) });
+let statuses = new Map();
+let retained = {};
 
 const dshClient = await import(pathToFileURL(path.join(root, "plugins/deepseek/plugin/client.js")).href);
 const opened = [];
 dshClient.apply({
   uiWorkspace: { openSession: (id) => opened.push(id) },
+  uiSession: { sessionStatus: { getSnapshot: () => statuses } },
+  sessions: { list: { getSnapshot: () => ({ byId: retained }) } },
   effect: (fn) => fn(),
 });
-await tick(); // the first answer only says where the sequence stands
-answer = { seq: 2, session: "dsh-9" };
-await tick(); // a new tap: the page should follow it
+
+await tick(); // first poll: both sequences are baselined, nothing acted on
+activation = { seq: 2, session: "dsh-9" };
+feed = { seq: 2, events: ["approve"] };
+// an approval in a background session must NOT be answered by this page
+statuses = new Map([["dsh-bg", { pendingInteraction: pendingFor("dsh-bg") }]]);
+retained = { "dsh-bg": { retainedBy: {} } };
+await tick();
+const answeredBackground = settled.length;
 const afterTap = opened.at(-1);
-answer = { seq: 3, session: null };
-await tick(); // a tap that belongs to no session opens nothing
+
+// now the user is looking at a session that is waiting: that one answers
+statuses = new Map([["dsh-fg", { pendingInteraction: pendingFor("dsh-fg") }]]);
+retained = { "dsh-fg": { retainedBy: { mainView: 1 } } };
+feed = { seq: 3, events: ["reject"] };
+await tick();
+
+// and an event this half does not know must do nothing at all
+feed = { seq: 4, events: ["somethingelse"] };
+await tick();
 
 globalThis.setInterval = realSetInterval;
 globalThis.fetch = realFetch;
@@ -174,6 +201,16 @@ if (afterTap !== "dsh-9") {
   failures += 1;
 } else {
   console.log("ok   dsh browser half follows an agent-key tap");
+}
+
+if (answeredBackground !== 0) {
+  console.log("FAIL dsh answered an approval the user was not looking at: " + JSON.stringify(settled));
+  failures += 1;
+} else if (settled.length !== 1 || settled[0][0] !== "dsh-fg" || settled[0][1] !== "rejected") {
+  console.log("FAIL dsh did not answer the visible approval: " + JSON.stringify(settled));
+  failures += 1;
+} else {
+  console.log("ok   dsh answers only the visible approval");
 }
 
 server.close();

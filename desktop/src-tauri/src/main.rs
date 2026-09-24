@@ -236,6 +236,7 @@ fn host_loop(
     );
     // the control port answers `activation` polls from this slot
     host.share_activation(queue.activation());
+    host.share_events(queue.events());
 
     // Agent keys follow whatever the plugins push; "off" mutes them.
     let mut agent_keys = config.harness != "off";

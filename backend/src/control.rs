@@ -178,11 +178,72 @@ impl Job {
 /// loop busy.
 pub type Activation = Arc<Mutex<Option<(u64, String)>>>;
 
+/// Key events a `plugin:` binding produced, newest last.
+///
+/// The keyboard reaches a harness two ways: a keystroke typed at whatever has
+/// focus, or - for a harness that owns an API - an event its own plugin acts on.
+/// A Web UI whose buttons have no key tokens (`dsh`) is the second kind, so the
+/// host keeps a feed the page polls, the same way it answers `activation`.
+#[derive(Debug, Clone, Default)]
+pub struct Events {
+    seq: Arc<Mutex<u64>>,
+    log: Arc<Mutex<Vec<(u64, String)>>>,
+}
+
+/// How many events a slow poller can fall behind before the oldest are dropped.
+/// A page polls once a second, so this is minutes of taps.
+const EVENT_BACKLOG: usize = 64;
+
+impl Events {
+    /// Record one `plugin:` event. Called from the device loop.
+    pub fn push(&self, event: &str) {
+        let Ok(mut seq) = self.seq.lock() else { return };
+        *seq += 1;
+        let id = *seq;
+        drop(seq);
+        let Ok(mut log) = self.log.lock() else { return };
+        log.push((id, event.to_string()));
+        if log.len() > EVENT_BACKLOG {
+            log.remove(0);
+        }
+    }
+
+    /// Everything newer than `since`, with the sequence to pass next time.
+    pub fn since(&self, since: u64) -> (u64, Vec<String>) {
+        let seq = self.seq.lock().map(|s| *s).unwrap_or(0);
+        let log = self.log.lock().ok();
+        let events = log
+            .map(|log| {
+                log.iter()
+                    .filter(|(id, _)| *id > since)
+                    .map(|(_, event)| event.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        (seq, events)
+    }
+}
+
+/// `{"seq":N,"events":["approve"]}` - the feed a plugin polls.
+///
+/// Event names are validated on the way in (one token, no quotes), so this needs
+/// no escaping step.
+pub fn events_json(events: &Events, since: u64) -> String {
+    let (seq, list) = events.since(since);
+    let body = list
+        .iter()
+        .map(|event| format!("\"{event}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"seq\":{seq},\"events\":[{body}]}}")
+}
+
 /// Commands waiting for the device loop to pick up.
 #[derive(Clone, Default)]
 pub struct Queue {
     jobs: Arc<Mutex<Vec<Job>>>,
     activation: Activation,
+    events: Events,
 }
 
 impl Queue {
@@ -201,6 +262,11 @@ impl Queue {
     /// The slot the device loop should write the last tap into.
     pub fn activation(&self) -> Activation {
         self.activation.clone()
+    }
+
+    /// The feed the device loop writes `plugin:` events into.
+    pub fn events(&self) -> Events {
+        self.events.clone()
     }
 }
 
@@ -275,10 +341,11 @@ fn read_capped_line(reader: &mut impl BufRead, line: &mut String) -> std::io::Re
 ///
 /// ```text
 /// GET /activation -> {"seq":3,"session":"8e53a70f-…"} | {"seq":3,"session":null}
+/// GET /events?since=4 -> {"seq":6,"events":["approve","reject"]}
 /// ```
 ///
 /// The line protocol on this port is untouched; anything else answers 404.
-/// `OPTIONS /activation` is there for the preflight a browser may send.
+/// `OPTIONS` is there for the preflight a browser may send.
 fn http(request: &str, reader: &mut impl BufRead, writer: &mut impl Write, queue: &Queue) {
     // swallow the headers, so the browser sees a complete response
     let mut header = String::new();
@@ -292,10 +359,24 @@ fn http(request: &str, reader: &mut impl BufRead, writer: &mut impl Write, queue
     }
     let mut parts = request.split_whitespace();
     let method = parts.next().unwrap_or_default();
-    let (status, body) = match (method, parts.next()) {
+    // the request target is `path` or `path?query`; split before matching, or a
+    // poller with a query string gets a 404
+    let target = parts.next().unwrap_or_default();
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let path = Some(path);
+    // `?since=N` lets a poller ask for what it has not seen yet
+    let since = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("since="))
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let (status, body) = match (method, path) {
         // a browser that decides to preflight the poll must not be told 404
-        ("OPTIONS", Some("/activation")) => ("204 No Content", String::new()),
+        ("OPTIONS", Some("/activation")) | ("OPTIONS", Some("/events")) => {
+            ("204 No Content", String::new())
+        }
         (_, Some("/activation")) => ("200 OK", activation_json(&queue.activation)),
+        (_, Some("/events")) => ("200 OK", events_json(&queue.events, since)),
         _ => ("404 Not Found", "{\"error\":\"not found\"}".to_string()),
     };
     let response = format!(
@@ -452,6 +533,59 @@ mod tests {
             "the socket reports what the host did, not just that it parsed"
         );
         host.join().unwrap();
+    }
+
+    #[test]
+    fn the_event_feed_hands_out_what_a_poller_has_not_seen() {
+        let events = Events::default();
+        // nothing yet: a first poll must not replay history
+        assert_eq!(events_json(&events, 0), "{\"seq\":0,\"events\":[]}");
+
+        events.push("approve");
+        events.push("reject");
+        assert_eq!(
+            events_json(&events, 0),
+            "{\"seq\":2,\"events\":[\"approve\",\"reject\"]}"
+        );
+
+        // a poller that already saw both gets an empty list but the right seq
+        assert_eq!(events_json(&events, 2), "{\"seq\":2,\"events\":[]}");
+        // and one that missed the first still gets the second
+        assert_eq!(events_json(&events, 1), "{\"seq\":2,\"events\":[\"reject\"]}");
+    }
+
+    #[test]
+    fn the_event_feed_drops_the_oldest_when_a_poller_falls_behind() {
+        let events = Events::default();
+        for i in 0..(EVENT_BACKLOG + 5) {
+            events.push(&format!("e{i}"));
+        }
+        let (seq, list) = events.since(0);
+        assert_eq!(seq as usize, EVENT_BACKLOG + 5);
+        assert_eq!(
+            list.len(),
+            EVENT_BACKLOG,
+            "a poller minutes behind does not grow the host without bound"
+        );
+        assert_eq!(list.first().map(String::as_str), Some("e5"));
+    }
+
+    #[test]
+    fn a_browser_poll_gets_the_events_over_http() {
+        let queue = Queue::default();
+        let port = serve(0, queue.clone()).expect("bind");
+        queue.events().push("approve");
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(b"GET /events?since=0 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(
+            response.ends_with("{\"seq\":1,\"events\":[\"approve\"]}"),
+            "{response}"
+        );
     }
 
     #[test]

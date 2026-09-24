@@ -237,6 +237,7 @@ fn run(live: bool) {
     // the port answers an `activation` poll from this slot, so a page gets an
     // answer even while the loop below is stuck in USB work
     host.share_activation(queue.activation());
+    host.share_events(queue.events());
     match control::serve(config.control_port, queue.clone()) {
         Ok(port) => println!("control: 127.0.0.1:{port}  (codex-micro-backend send ...)"),
         Err(err) => eprintln!(

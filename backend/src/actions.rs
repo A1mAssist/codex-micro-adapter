@@ -51,6 +51,11 @@ pub enum Step {
     /// owns the timing - it repeats the key while it is held, the way a real
     /// keyboard does - so this is a directive, not something `perform` can do.
     Hold(Combo),
+    /// `plugin:<event>`: hand the event to whatever harness plugin is listening
+    /// instead of synthesising a keystroke. This is the door a harness with no
+    /// keyboard of its own uses - a Web UI whose buttons have no key tokens, or
+    /// an agent that must be answered through its own API rather than typed at.
+    Plugin(String),
 }
 
 /// What actually happened, so the host can log or surface it.
@@ -64,6 +69,9 @@ pub enum Outcome {
     /// Nothing to do and nothing worth logging - the release of a key whose
     /// binding is a plain tap.
     Ignored,
+    /// A `plugin:` binding: the host publishes it for a harness plugin to act on
+    /// instead of synthesising a keystroke.
+    Plugin(String),
 }
 
 pub trait Performer {
@@ -159,6 +167,16 @@ pub fn parse_binding(binding: &str) -> Option<Step> {
             return None;
         };
         return Some(Step::Hold(combo));
+    }
+    if let Some(event) = binding.strip_prefix("plugin:") {
+        // one short token: it becomes a line in the event feed a plugin reads,
+        // and a token with spaces would be ambiguous there
+        let event = event.trim();
+        if event.is_empty() || event.len() > 64 || !event.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == ':')
+        {
+            return None;
+        }
+        return Some(Step::Plugin(event.to_string()));
     }
     parse_combo(binding)
 }
@@ -390,6 +408,8 @@ fn perform(step: &Step, performer: &mut dyn Performer) -> Outcome {
             "hold: is only meaningful on a keycap slot, got {}",
             combo.label
         )),
+        // `plugin:` is not a keystroke at all; the host publishes it
+        Step::Plugin(event) => Outcome::Plugin(event.clone()),
     }
 }
 fn arrow(vk: u16, label: &str) -> Combo {
@@ -579,6 +599,56 @@ pub mod tests {
         assert_eq!(
             dispatch(&Trigger::EncoderClick(None), &Bindings::default(), &mut performer),
             Outcome::Unbound("encoder:click".into())
+        );
+    }
+
+    #[test]
+    fn plugin_bindings_name_an_event_for_a_harness_plugin() {
+        // the door for a harness with no keys of its own: the binding does not
+        // synthesise anything, the host publishes the name and the plugin acts
+        let Some(Step::Plugin(event)) = parse_binding("plugin:approve") else {
+            panic!("plugin: did not parse")
+        };
+        assert_eq!(event, "approve");
+        assert!(matches!(
+            parse_binding("plugin:composer.submit"),
+            Some(Step::Plugin(_))
+        ));
+        assert!(matches!(
+            parse_binding("plugin:turn_interrupt"),
+            Some(Step::Plugin(_))
+        ));
+
+        // a name becomes one line in the event feed, so a token with a space or a
+        // quote would be ambiguous there
+        assert!(parse_binding("plugin:").is_none());
+        assert!(parse_binding("plugin:two words").is_none());
+        assert!(parse_binding("plugin:a\"b").is_none());
+        assert!(parse_binding(&format!("plugin:{}", "x".repeat(65))).is_none());
+    }
+
+    #[test]
+    fn a_plugin_binding_publishes_on_press_only() {
+        let mut bindings = Bindings::defaults();
+        bindings.set("ACT07", "plugin:approve");
+        let mut performer = Recording::default();
+        let keycap = |down| Trigger::Keycap {
+            slot: "ACT07".into(),
+            action: None,
+            down,
+        };
+        assert_eq!(
+            dispatch(&keycap(true), &bindings, &mut performer),
+            Outcome::Plugin("approve".into())
+        );
+        assert_eq!(
+            dispatch(&keycap(false), &bindings, &mut performer),
+            Outcome::Ignored,
+            "a release has nothing to publish"
+        );
+        assert!(
+            performer.combos.is_empty(),
+            "nothing was typed at the focused window"
         );
     }
 

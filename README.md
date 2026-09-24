@@ -233,11 +233,16 @@ separate microphone keys* is off; with it on, `ACT10` and `ACT11` are separate
 slots and both are bindable, including `ACT11` even when it carries no keycap.
 
 Binding syntax is deliberately tiny: `mod+mod+key`, `type:<literal text>`,
-`url:<https url>`, or `hold:<combo>` - a held key, which goes down when you press
-and comes back up when you let go, repeating while it is held the way a real
-keyboard does. Any slot can use any of them, so the microphone is not special:
-it is just a key whose default binding happens to be a hold. Put a `MIC` keycap
-on another slot or bind `hold:...` somewhere else and it works the same.
+`url:<https url>`, `hold:<combo>`, or `plugin:<event>`.
+
+- `hold:` goes down when you press and comes back up when you let go, repeating
+  while it is held the way a real keyboard does. Any slot can use it, so the
+  microphone is not special: it is just a key whose default binding happens to be
+  a hold. Put a `MIC` keycap on another slot and it works the same.
+- `plugin:` synthesises nothing. The host publishes the event and the harness's
+  own plugin calls its API - the door for a UI whose controls have no key tokens
+  (`dsh`'s approval panel). It answers only the approval of the session the user
+  is looking at, never one waiting in the background.
 
 Unbound actions are reported, never swallowed. Defaults are almost empty on
 purpose — inventing keymaps for someone else's tool is guessing.

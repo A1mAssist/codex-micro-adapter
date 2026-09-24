@@ -120,8 +120,8 @@ A slot is a binding key in its own right: the host looks up `ACT06`…`ACT12`
 before falling back to the keycap's own action, and a slot whose keycap carries
 no action (a bare `ACT11`) still resolves through its own id.
 
-Binding values are one combo, `type:<text>`, `url:<https url>`, or
-`hold:<combo>`. A `hold:` key is stateful: the host presses it on the keycap's
+Binding values are one combo, `type:<text>`, `url:<https url>`, `hold:<combo>`,
+or `plugin:<event>`. A `hold:` key is stateful: the host presses it on the keycap's
 press, repeats it every 100 ms while it stays down, and releases it on the
 release. Harnesses that watch for auto-repeat to keep a recording alive (Claude
 Code's push-to-talk) depend on that repeat. A code whose action is `ptt` - what
@@ -129,6 +129,13 @@ the `MIC` / `MIC1` keycaps resolve to - is just a key like any other: the defaul
 binding is `hold:space`, and moving the keycap or rebinding the slot changes
 nothing else. Keycap releases are delivered to the host for this reason; a
 non-hold binding ignores them.
+
+A `plugin:<event>` binding synthesises nothing: the host appends the event to a
+feed a harness page polls over `GET /events?since=N`, and that harness's own
+plugin acts on it. This is the door for a UI whose controls are plain buttons with
+no key tokens (`dsh`'s approval panel). Event names are one short token; the first
+poll of a page baselines the sequence, so an event from before it loaded is not
+replayed.
 
 Analog stick directions are `up`, `right`, `down`, `left` with a dead zone of
 `0.5`; the app's default commands are `composer.togglePlanMode`,

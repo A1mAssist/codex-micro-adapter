@@ -160,6 +160,7 @@ impl HostEvent {
                 format!("{} {}", if *down { "hold" } else { "release" }, combo.label)
             }
             // never reaches the log: the host drops it before pushing
+            HostEvent::Action(Outcome::Plugin(event)) => format!("plugin {event}"),
             HostEvent::Action(Outcome::Ignored) => String::new(),
         }
     }
@@ -336,6 +337,8 @@ pub struct Host<O: Opener> {
     encoder: EncoderHold,
     /// A `hold:` binding currently down, if any.
     held: HoldState,
+    /// Where `plugin:` bindings land, for a harness page to poll.
+    events: crate::control::Events,
 }
 
 impl<O: Opener> Host<O> {
@@ -362,6 +365,7 @@ impl<O: Opener> Host<O> {
             log: VecDeque::new(),
             encoder: EncoderHold::default(),
             held: HoldState::default(),
+            events: crate::control::Events::default(),
         }
     }
 
@@ -377,6 +381,11 @@ impl<O: Opener> Host<O> {
     /// can poll it while this loop is busy with USB.
     pub fn share_activation(&mut self, slot: crate::control::Activation) {
         self.activation = slot;
+    }
+
+    /// Share the event feed with the control port the same way.
+    pub fn share_events(&mut self, events: crate::control::Events) {
+        self.events = events;
     }
 
     pub fn brightness_percent(&self) -> u8 {
@@ -567,6 +576,12 @@ impl<O: Opener> Host<O> {
         match actions::dispatch(&trigger, &self.bindings, self.performer.as_mut()) {
             Outcome::Hold { combo, down } => {
                 HostEvent::Action(apply_hold(&mut self.held, self.performer.as_mut(), combo, down))
+            }
+            // a `plugin:` binding is not a keystroke: hand it to the feed a
+            // harness page polls, and let that plugin do the work
+            Outcome::Plugin(event) => {
+                self.events.push(&event);
+                HostEvent::Action(Outcome::Sent(format!("plugin:{event}")))
             }
             other => HostEvent::Action(other),
         }
