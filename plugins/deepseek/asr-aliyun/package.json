@@ -1,0 +1,15 @@
+{
+  "name": "dsh-asr-aliyun",
+  "version": "0.1.0",
+  "description": "Aliyun DashScope realtime ASR as a DeepSeek Harness speech provider",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.3",
+    "@deepseek-ai/dsh-experimental-speech-to-text": "^0.1.7-alpha.1"
+  }
+}

@@ -20,6 +20,8 @@ plugins/pi/            pi extension: harness events -> agent keys
 plugins/opencode/      opencode plugin: harness events -> agent keys
 plugins/deepseek/      DeepSeek Harness Cordis plugin: harness seams -> keys,
                        plus a browser half that opens the session you tapped
+plugins/deepseek/asr-aliyun/  Aliyun DashScope speech provider for dsh's own
+                       microphone - cloud transcription, no local model
 presets/               per-harness binding maps for the Micro keys
 docs/HARNESSES.md      what each harness lights, event by event
 docs/PROTOCOL.md       the wire protocol, as reverse-engineered

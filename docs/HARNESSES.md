@@ -157,8 +157,15 @@ session the user is looking at, never one in the background.
 | `plugin:cancel` | stops the running turn |
 | `plugin:slash:<name>` | runs a slash command (`plan`, `compact`, `goal`, `permission`, `export`, `feedback`) |
 
-Preset: [`presets/dsh.json`](../presets/dsh.json). Voice input is not wired: it
-lives in a React component's own state, which another plugin cannot reach.
+Preset: [`presets/dsh.json`](../presets/dsh.json).
+
+Voice input cannot be *started* from outside - the recording lives in a React
+component's own state - but the recognition step is a service
+(`ctx.speechToText`), and
+[`plugins/deepseek/asr-aliyun`](../plugins/deepseek/asr-aliyun/README.md)
+registers an Aliyun DashScope provider there. That swaps the bundled local
+SenseVoice model for cloud recognition, with the key in the harness's own
+credential store.
 
 ## Check an adapter
 

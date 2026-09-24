@@ -115,8 +115,14 @@ to `enter` because that is a real key.
 `dsh`'s voice input (record, transcribe, insert into the draft) is a React
 component's internal state, not a service: the recording object is created inside
 the composer slot and `ctx.slots` exposes only `register`, so another plugin
-cannot reach it. There is therefore no `plugin:` event for it. Enabling the voice
-bundle and clicking the microphone is the only path today.
+cannot **start** a recording or read its audio. There is therefore no `plugin:`
+event for it.
+
+What *is* a service is the recognizer seam, `ctx.speechToText`: every recording
+the UI takes is handed to a registered provider as a 16 kHz mono PCM16 WAV.
+[`asr-aliyun`](asr-aliyun/README.md) is such a provider - it transcribes in the
+Aliyun cloud instead of with the bundled local model, so voice input works
+without the SenseVoice download.
 
 ## Verify
 

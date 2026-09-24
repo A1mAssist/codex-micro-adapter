@@ -236,6 +236,230 @@ if (answeredBackground !== 0) {
   console.log("ok   dsh answers only the visible approval");
 }
 
+// --- dsh Aliyun ASR provider ------------------------------------------------
+// The provider takes its socket through `connect`, so the protocol is exercised
+// against a scripted socket: no network, no credentials, and the exact frames
+// the upstream would send.
+const asr = await import(pathToFileURL(path.join(root, "plugins/deepseek/asr-aliyun/index.js")).href);
+
+/** A 16 kHz mono PCM16 WAV with `samples` silent samples. */
+function wav(samples) {
+  const pcm = Buffer.alloc(samples * 2);
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0, "ascii");
+  head.writeUInt32LE(36 + pcm.length, 4);
+  head.write("WAVE", 8, "ascii");
+  head.write("fmt ", 12, "ascii");
+  head.writeUInt32LE(16, 16);
+  head.writeUInt16LE(1, 20);
+  head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(16000, 24);
+  head.writeUInt32LE(32000, 28);
+  head.writeUInt16LE(2, 32);
+  head.writeUInt16LE(16, 34);
+  head.write("data", 36, "ascii");
+  head.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([head, pcm]);
+}
+
+/**
+ * One scripted upstream. It records what we sent and answers the frames the real
+ * service answers — `session.update` and `session.finish` — leaving the audio
+ * appends silent, exactly as DashScope does. `utterances` are delivered with the
+ * finish reply, which is where real completions land.
+ */
+function fakeUpstream({ utterances = [], failAtStart = "" } = {}) {
+  const sent = [];
+  const say = (payload) => queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify(payload) }));
+  const socket = {
+    close: () => {},
+    send: (text) => {
+      const frame = JSON.parse(text);
+      sent.push(frame);
+      if (failAtStart && frame.type === "session.update") return say({ type: "error", error: { message: failAtStart } });
+      if (frame.type === "session.update") return say({ type: "session.updated", session: { id: "s1" } });
+      if (frame.type === "session.finish") {
+        for (const transcript of utterances) {
+          say({ type: "conversation.item.input_audio_transcription.completed", item_id: "i1", transcript });
+        }
+        return say({ type: "session.finished" });
+      }
+    },
+  };
+  return { sent, socket };
+}
+
+async function transcribeWith(options = {}, { audio = wav(3200), language = "zh" } = {}) {
+  const { sent, socket } = fakeUpstream(options);
+  const text = await asr.recognize({
+    pcm: asr.pcmFromWave(audio).pcm,
+    language,
+    apiKey: "test-key",
+    workspaceId: "ws-test",
+    signal: undefined,
+    connect: () => {
+      queueMicrotask(() => socket.onopen?.());
+      return socket;
+    },
+  });
+  return { text, sent };
+}
+
+{
+  const ok = [];
+  // a normal recording: session accepted, one utterance, session finished
+  const { text, sent } = await transcribeWith({ utterances: ["你好世界"] });
+  const types = sent.map((m) => m.type);
+  if (types[0] !== "session.update") ok.push("first frame is session.update");
+  if (!types.includes("input_audio_buffer.append")) ok.push("audio is appended");
+  if (types.at(-1) !== "session.finish") ok.push("the session is finished");
+  if (sent[0].session.sample_rate !== 16000) ok.push("it asks for 16 kHz");
+  if (sent[0].session.input_audio_transcription.language !== "zh") ok.push("it passes the language through");
+  if (text !== "你好世界") ok.push(`text came back (got ${JSON.stringify(text)})`);
+
+  // server VAD splits a recording: both utterances must survive, in order
+  const split = await transcribeWith({ utterances: ["第一段", "第二段"] });
+  if (split.text !== "第一段第二段") ok.push(`split utterances are joined (got ${JSON.stringify(split.text)})`);
+
+  // an upstream error must reach the caller, not hang it
+  let thrown = "";
+  try {
+    await transcribeWith({ failAtStart: "bad key" });
+  } catch (error) {
+    thrown = error.message;
+  }
+  if (thrown !== "bad key") ok.push(`upstream errors surface (got ${JSON.stringify(thrown)})`);
+
+  // `auto` must not be sent as a literal language
+  const auto = await transcribeWith({ utterances: ["x"] }, { language: "auto" });
+  if ("language" in auto.sent[0].session.input_audio_transcription) {
+    ok.push("auto detection sends no language field");
+  }
+
+  // 100 ms per append (16000 samples/s * 2 bytes / 10), and nothing larger, or a
+  // long recording would build one oversized frame
+  const long = await transcribeWith({ utterances: ["y"] }, { audio: wav(1600 * 6) });
+  const appends = long.sent.filter((m) => m.type === "input_audio_buffer.append");
+  const sizes = appends.map((m) => Buffer.from(m.audio, "base64").length);
+  if (appends.length !== 6) ok.push(`300 ms of audio appends 6 times (got ${appends.length})`);
+  if (sizes.some((n) => n > 3200)) ok.push(`no append exceeds 100 ms (got ${JSON.stringify(sizes)})`);
+  const carried = sizes.reduce((a, b) => a + b, 0);
+  if (carried !== asr.pcmFromWave(wav(1600 * 6)).pcm.length) {
+    ok.push(`every sample is sent (sent ${carried}, had ${asr.pcmFromWave(wav(1600 * 6)).pcm.length})`);
+  }
+
+  // the WAV reader must reject what DashScope would only reject later
+  const rejects = [];
+  const stereo = wav(3200);
+  stereo.writeUInt16LE(2, 22); // channels = 2
+  for (const [label, bytes] of [
+    ["stereo", stereo],
+    ["truncated", Buffer.from("RIFFxxxxWAVE")],
+    ["not-a-wave", Buffer.from("hello there, not audio at all")],
+  ]) {
+    try {
+      const parsed = asr.pcmFromWave(bytes);
+      asr.requireCanonical(parsed.format);
+      rejects.push(label);
+    } catch {
+      /* expected */
+    }
+  }
+  if (rejects.length > 0) ok.push(`bad audio is refused: ${rejects.join(", ")}`);
+
+  // A LIST chunk before the audio (some encoders write one) must be walked past,
+  // and an odd-sized chunk is followed by a pad byte. Chunk sizes are written with
+  // writeUInt32LE, because Buffer.from([400,0,0,0]) silently truncates to 144.
+  {
+    const chunk = (id, body) => {
+      const size = Buffer.alloc(4);
+      size.writeUInt32LE(body.length, 0);
+      return Buffer.concat([Buffer.from(id, "ascii"), size, body, Buffer.alloc(body.length % 2)]);
+    };
+    const pcm = Buffer.alloc(400);
+    const riffHeader = wav(0).subarray(0, 36); // RIFF/WAVE/fmt, no data chunk yet
+    const rebuilt = Buffer.concat([
+      riffHeader,
+      chunk("LIST", Buffer.from("INFOhello!")), // 10 bytes: even
+      chunk("LIST", Buffer.from("INFOR")), // 5 bytes: odd, forces a pad byte
+      chunk("data", pcm),
+    ]);
+    rebuilt.writeUInt32LE(rebuilt.length - 8, 4);
+    const parsed = asr.pcmFromWave(rebuilt);
+    asr.requireCanonical(parsed.format);
+    if (parsed.pcm.length !== 400) ok.push(`LIST chunks are skipped (got ${parsed.pcm.length} bytes)`);
+  }
+
+  // Cancelling while the provider is waiting for the upstream must reject
+  // straight away, not sit out the tail timeout. dsh aborts this signal when the
+  // plugin unloads, and a 15 s wait there would hang the unload.
+  {
+    const silent = { close: () => {}, send: () => {} };
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = asr.recognize({
+      pcm: Buffer.alloc(3200),
+      language: "zh",
+      apiKey: "test-key",
+      workspaceId: "ws-test",
+      signal: controller.signal,
+      connect: () => {
+        queueMicrotask(() => silent.onopen?.());
+        return silent;
+      },
+    });
+    setTimeout(() => controller.abort(), 20);
+    let cancelled = "";
+    try {
+      await pending;
+    } catch (error) {
+      cancelled = error.message;
+    }
+    const took = Date.now() - started;
+    if (cancelled !== "the recording was cancelled") ok.push(`cancelling rejects (got ${JSON.stringify(cancelled)})`);
+    if (took > 2000) ok.push(`cancelling is immediate (took ${took} ms)`);
+  }
+
+  // Cancelling during the connect must also reject at once and close the socket,
+  // or an unload would wait on a connection the recording already abandoned.
+  {
+    let closed = false;
+    const socket = { close: () => { closed = true; }, send: () => {} };
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = asr.recognize({
+      pcm: Buffer.alloc(3200),
+      language: "zh",
+      apiKey: "test-key",
+      workspaceId: "ws-test",
+      signal: controller.signal,
+      connect: () => socket, // never opens
+    });
+    setTimeout(() => controller.abort(), 20);
+    let cancelled = "";
+    try {
+      await pending;
+    } catch (error) {
+      cancelled = error.message;
+    }
+    if (cancelled !== "the recording was cancelled") ok.push(`cancelling a connect rejects (got ${JSON.stringify(cancelled)})`);
+    if (!closed) ok.push("cancelling a connect closes the socket");
+    if (Date.now() - started > 2000) ok.push("cancelling a connect is immediate");
+  }
+
+  // `Config` is a schema slot, not a bag of defaults: cordis calls
+  // `Config["~standard"].validate`, so exporting a plain object makes the plugin
+  // throw on load. The defaults have to live inside the plugin instead.
+  if (asr.Config !== undefined) ok.push("it must not export a non-schema Config");
+
+  if (ok.length === 0) {
+    console.log("ok   dsh Aliyun ASR provider protocol");
+  } else {
+    console.log("FAIL dsh Aliyun ASR provider: " + ok.join("; "));
+    failures += 1;
+  }
+}
+
 server.close();
 if (failures) {
   console.error(`\n${failures} harness adapter check(s) failed`);

@@ -46,6 +46,11 @@ one adapter for each of five coding agents.
   bridge drops `PermissionRequest` and has no `SessionEnd`, so this one watches
   the harness seams directly, and its browser half makes an agent-key tap switch
   the conversation in the page.
+- **dsh voice input** - `plugins/deepseek/asr-aliyun` registers an Aliyun
+  DashScope recognizer with the harness's own `ctx.speechToText` seam, so the
+  composer microphone transcribes in the cloud instead of downloading the local
+  SenseVoice model. The key resolves through `ctx.credentials` on every
+  recording.
 - Per-harness keystroke maps in `presets/`, each verified against the tool's own
   keybinding table.
 
