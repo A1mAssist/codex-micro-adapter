@@ -1,5 +1,11 @@
 {
   "bindings": {
+    "ACT07": "enter",
+    "ACT08": "escape",
+    "ACT12": "enter",
+    "ACT10": "space",
+    "ACT11": "space",
+    "ptt": "space",
     "composer.submit": "enter",
     "approval.approve": "enter",
     "approval.decline": "escape",

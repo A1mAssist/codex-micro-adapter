@@ -188,6 +188,8 @@ npx @deepseek-ai/dsh plugin --profile web add <REPO>/plugins/deepseek/plugin
 ```json
 {
   "bindings": {
+    "ACT06": "ctrl+shift+p",
+    "ACT07": "ctrl+enter",
     "composer.submit": "enter",
     "approval.approve": "ctrl+enter",
     "forkThread": "type:/rewind",
@@ -195,6 +197,13 @@ npx @deepseek-ai/dsh plugin --profile web add <REPO>/plugins/deepseek/plugin
   }
 }
 ```
+
+**每个命令键都先认自己的槽位。** `ACT06`…`ACT12` 和别的绑定一样写在 `bindings` 里，
+所以同一个物理键可以在不同 harness 里干完全不同的事，不用换键帽 —— 键帽自带的动作
+（`composer.submit`、push-to-talk）只在槽位没绑定时兜底。这正是同一块键盘能给
+Codex CLI、Claude Code、pi、opencode 各自的键位表的原因。关闭**分离麦克风键**时槽位
+是 `ACT10_ACT11`；打开后 `ACT10` 和 `ACT11` 是两个独立槽位，都可以绑定，`ACT11` 就算
+没装键帽也一样能绑。
 
 绑定语法刻意做得很小：`mod+mod+key`、`type:<字面文本>`、`url:<https 地址>`。没绑定的
 动作会被报出来，绝不会被默默吞掉。默认值几乎为空是有意的 —— 替别人的工具发明键位

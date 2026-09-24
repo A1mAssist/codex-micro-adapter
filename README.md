@@ -213,6 +213,8 @@ Two directions, both harness-agnostic:
 ```json
 {
   "bindings": {
+    "ACT06": "ctrl+shift+p",
+    "ACT07": "ctrl+enter",
     "composer.submit": "enter",
     "approval.approve": "ctrl+enter",
     "forkThread": "type:/rewind",
@@ -220,6 +222,15 @@ Two directions, both harness-agnostic:
   }
 }
 ```
+
+**Every command key answers to its own slot first.** `ACT06`…`ACT12` are
+bindings like any other, so a key can take on whatever the harness in front you
+needs without changing the keycap printed on it — the keycap's own action
+(`composer.submit`, push-to-talk) is only the fallback when the slot is unbound.
+That is how the same keyboard drives Codex CLI, Claude Code, pi and opencode
+when they each want a different key. `ACT10_ACT11` is the slot when *Use
+separate microphone keys* is off; with it on, `ACT10` and `ACT11` are separate
+slots and both are bindable, including `ACT11` even when it carries no keycap.
 
 Binding syntax is deliberately tiny: `mod+mod+key`, `type:<literal text>`, or
 `url:<https url>`. Unbound actions are reported, never swallowed. Defaults are

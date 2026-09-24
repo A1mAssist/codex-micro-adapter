@@ -1,5 +1,6 @@
 {
   "bindings": {
+    "ACT12": "enter",
     "composer.submit": "enter"
   }
 }

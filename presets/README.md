@@ -8,6 +8,22 @@ the log, never swallowed.
 Binding syntax is `mod+mod+key` (`enter`, `escape`, `shift+tab`, `alt+.`,
 `ctrl+shift+p`, `f5`), `type:<literal text>` or `url:<https url>`.
 
+## Slots come first
+
+Every command key is a binding of its own: `ACT06`…`ACT12`. The host looks the
+slot up before the keycap's own action, so `"ACT07": "y"` makes the key that
+prints APPR approve something in a CLI that wants `y` — no keycap swap, no
+catalogue change. That is what lets one board serve several harnesses. The
+keycap's action (`composer.submit`, push-to-talk) is only the fallback for a
+slot with no binding.
+
+`ACT10_ACT11` is the slot when *Use separate microphone keys* is off. Turn it on
+and `ACT10` and `ACT11` become separate bindable slots; `ACT11` is bindable even
+when it carries no keycap, so the second microphone switch is never silent.
+
+In the desktop app this is the **Key sent to the current harness** box in the
+keycap editor. Editing `config.json` by hand works exactly the same.
+
 | Preset | Verified against |
 | --- | --- |
 | `claude-code.json` | the keybinding table inside the installed Claude Code 2.1.x bundle |
@@ -28,8 +44,14 @@ Other keys you can bind by hand: `ctrl+o` transcript, `ctrl+t` todos,
 `ctrl+r` history search, `ctrl+l` clear input, `ctrl+c` interrupt, `ctrl+d`
 exit, `escape` cancel. Claude's `meta+*` shortcuts (fast mode, model picker,
 thinking toggle) are **unverified on Windows** - bind them only after trying.
-Push-to-talk exists in Claude Code (`space` in the chat context) and can be
-bound to `ptt`.
+Push-to-talk exists in Claude Code: its own keymap ships `space: voice:pushToTalk`
+in the chat context, so `ACT10`, `ACT11` and `ptt` are all preset to `space`.
+
+ponytail: the adapter sends one press+release per tap, not a held key, which is
+what the rest of the binding table does. Claude Code starts recording on the
+press and falls back to a 200 ms timer when it sees no auto-repeat, so a tap
+there is a very short recording. A real down/up pair needs a hold-aware
+performer; add it when hold-to-talk matters more than one more trait method.
 
 ## Codex CLI
 

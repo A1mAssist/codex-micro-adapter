@@ -749,7 +749,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            Event::Trigger(Trigger::Act(layout::Action::Command(c))) if c == "composer.submit"
+            Event::Trigger(Trigger::Keycap {
+                action: Some(layout::Action::Command(c)),
+                ..
+            }) if c == "composer.submit"
         ));
     }
 

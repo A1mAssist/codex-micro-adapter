@@ -449,13 +449,19 @@ pub fn slot_for_key(key: &str, separate_microphone_keys: bool) -> Option<&'stati
 /// What a key event should do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
+    /// An action that is not tied to a keycap: a stick push, a knob tick, a skill.
     Act(Action),
+    /// A keycap press. The slot (`ACT06`…`ACT12`) is the binding key that wins;
+    /// `action` is the catalogue fallback, and `None` when the keycap carries no
+    /// action of its own (`EMPT1`…). Either way the slot answers to a binding, so
+    /// nothing is swallowed.
+    Keycap {
+        slot: String,
+        action: Option<Action>,
+    },
     /// One of the six agent keys was pressed: focus that session's window, or
     /// fall back to the `agent.focus.<n>` binding.
     AgentKey(u8),
-    PushToTalk {
-        press: bool,
-    },
     EncoderPress,
     EncoderRelease,
     /// Encoder click: the action the layout binds to `click`, or `None` in the
@@ -533,16 +539,14 @@ pub fn resolve_event(event: &HidEvent, layout: &Layout) -> Option<Trigger> {
         };
     }
 
-    // only presses act (act == 1); releases are ignored for normal keys
+    // The host resolves a keycap through the binding table now, so a slot with
+    // no action of its own still reaches it instead of being dropped here.
     let slot_id = slot_for_key(key, layout.separate_microphone_keys)?;
-    let slot = layout.slots.get(slot_id)?;
-    let action = resolve_slot(slot)?;
-    match action {
-        Action::PushToTalk => Some(Trigger::PushToTalk {
-            press: event.act == 1,
-        }),
-        other => (event.act == 1).then_some(Trigger::Act(other)),
-    }
+    let action = layout.slots.get(slot_id).and_then(resolve_slot);
+    (event.act == 1).then(|| Trigger::Keycap {
+        slot: slot_id.to_string(),
+        action,
+    })
 }
 
 /// Nearest of the four stick directions, ported from the vendor's `lqs`.
@@ -726,10 +730,67 @@ mod tests {
         let layout = layout_with("ACT06", slot("CODEX"));
         assert_eq!(
             resolve_event(&hid("ACT06", 1), &layout),
-            Some(Trigger::Act(Action::Command("composer.submit".into())))
+            Some(Trigger::Keycap {
+                slot: "ACT06".into(),
+                action: Some(Action::Command("composer.submit".into())),
+            })
         );
         assert_eq!(resolve_event(&hid("ACT06", 0), &layout), None);
         assert_eq!(resolve_event(&hid("ACT06", 2), &layout), None);
+    }
+
+    #[test]
+    fn a_slot_with_no_action_still_reaches_the_bindings() {
+        // the app ships ACT11 as an empty keycap, and the separate-microphone
+        // switch is the only thing that gives it a key of its own: it must still
+        // resolve, or the user's second microphone key is silent
+        let mut layout = Layout::default();
+        layout.separate_microphone_keys = true;
+        assert_eq!(
+            resolve_event(&hid("ACT11", 1), &layout),
+            Some(Trigger::Keycap {
+                slot: "ACT11".into(),
+                action: None,
+            })
+        );
+        // and the same key is the right half of the wide key when they are merged
+        layout.separate_microphone_keys = false;
+        assert_eq!(
+            resolve_event(&hid("ACT10", 1), &layout),
+            Some(Trigger::Keycap {
+                slot: "ACT10_ACT11".into(),
+                action: Some(Action::PushToTalk),
+            })
+        );
+        assert_eq!(resolve_event(&hid("ACT11", 1), &layout), None);
+    }
+
+    #[test]
+    fn the_slot_binding_beats_the_keycap_catalogue() {
+        // this is the whole point of the slot names: a harness can give ACT07 a
+        // job of its own without changing which keycap sits there
+        let mut bindings = crate::actions::Bindings::default();
+        bindings.set("ACT06", "ctrl+1");
+        bindings.set("composer.submit", "ctrl+2");
+        let mut performer = crate::actions::tests::Recording::default();
+        let layout = layout_with("ACT06", slot("CODEX"));
+
+        let Some(trigger) = resolve_event(&hid("ACT06", 1), &layout) else {
+            panic!("no trigger")
+        };
+        assert_eq!(
+            crate::actions::dispatch(&trigger, &bindings, &mut performer),
+            crate::actions::Outcome::Sent("ctrl+1".into())
+        );
+
+        // with no slot binding, the catalogue default still applies
+        let mut performer = crate::actions::tests::Recording::default();
+        let outcome = crate::actions::dispatch(
+            &trigger,
+            &crate::actions::Bindings::defaults(),
+            &mut performer,
+        );
+        assert_eq!(outcome, crate::actions::Outcome::Sent("enter".into()));
     }
 
     #[test]

@@ -91,10 +91,17 @@ impl Bindings {
     }
 }
 
-/// The binding key for a trigger, or `None` when it carries its own payload
-/// (composer text, external URL) and therefore needs no binding.
-fn lookup_key(trigger: &Trigger) -> Option<String> {
+/// The binding keys a trigger answers to, most specific first.
+///
+/// A keycap answers to its own slot id (`ACT06`…`ACT12`) before anything else,
+/// so a harness can give the key a job without touching the keycap catalogue.
+/// The catalogue's own action id stays on as the second key, which is how the
+/// shipped presets and the app's defaults keep working. `None` means the trigger
+/// carries its own payload and needs no binding at all.
+fn lookup_keys(trigger: &Trigger) -> Option<Vec<String>> {
+    let one = |key: String| Some(vec![key]);
     match trigger {
+        Trigger::Keycap { .. } => None, // handled by the caller: it has a fallback
         Trigger::Act(Action::ComposerText { .. }) | Trigger::Act(Action::ExternalUrl { .. }) => {
             None
         }
@@ -102,17 +109,16 @@ fn lookup_key(trigger: &Trigger) -> Option<String> {
         | Trigger::Stick(action)
         | Trigger::EncoderTick(action)
         | Trigger::EncoderClick(Some(action))
-        | Trigger::EncoderLongPress(Some(action)) => Some(action_key(action)),
-        Trigger::PushToTalk { .. } => Some("ptt".to_string()),
+        | Trigger::EncoderLongPress(Some(action)) => one(action_key(action)),
         // what an agent key does when its session has no window to focus
-        Trigger::AgentKey(index) => Some(format!("agent.focus.{index}")),
-        Trigger::EncoderPress => Some("encoder:press".to_string()),
-        Trigger::EncoderRelease => Some("encoder:release".to_string()),
+        Trigger::AgentKey(index) => one(format!("agent.focus.{index}")),
+        Trigger::EncoderPress => one("encoder:press".to_string()),
+        Trigger::EncoderRelease => one("encoder:release".to_string()),
         // the knob gestures the layout did not bind: a harness can bind these
-        Trigger::EncoderClick(None) => Some("encoder:click".to_string()),
-        Trigger::EncoderLongPress(None) => Some("encoder:longPress".to_string()),
-        Trigger::Scroll(-1) => Some("encoder:up".to_string()),
-        Trigger::Scroll(_) => Some("encoder:down".to_string()),
+        Trigger::EncoderClick(None) => one("encoder:click".to_string()),
+        Trigger::EncoderLongPress(None) => one("encoder:longPress".to_string()),
+        Trigger::Scroll(-1) => one("encoder:up".to_string()),
+        Trigger::Scroll(_) => one("encoder:down".to_string()),
     }
 }
 
@@ -219,28 +225,45 @@ pub fn virtual_key(name: &str) -> Option<u16> {
 /// Encoder scroll needs no configuration: `Tt` in `codex-micro-bridge` maps CW to
 /// the up arrow and CC to the down arrow, so that is the built-in fallback.
 pub fn dispatch(trigger: &Trigger, bindings: &Bindings, performer: &mut dyn Performer) -> Outcome {
-    // payload-carrying actions are already fully specified by the layout
-    match trigger {
-        Trigger::Act(Action::ComposerText { text, .. })
-        | Trigger::EncoderClick(Some(Action::ComposerText { text, .. }))
-        | Trigger::EncoderLongPress(Some(Action::ComposerText { text, .. })) => {
-            let label = format!("type:{text}");
-            return performer
-                .type_text(text)
-                .map_or_else(Outcome::Failed, |_| Outcome::Sent(label));
+    // A keycap answers to its slot id (`ACT06`) and then to the action the
+    // keycap itself carries (`composer.submit`); a binding on either wins over
+    // the catalogue, so the slot can be given any job without swapping keycaps.
+    // With neither bound it falls back to the keycap's own payload (the `:yolo:`
+    // text, the OpenAI URL), and failing that it reports its slot by name - an
+    // unassigned key is never swallowed.
+    if let Trigger::Keycap { slot, action } = trigger {
+        let mut keys = vec![slot.clone()];
+        if let Some(action) = action {
+            let key = action_key(action);
+            if key != *slot {
+                keys.push(key);
+            }
         }
-        Trigger::Act(Action::ExternalUrl { url, .. })
-        | Trigger::EncoderClick(Some(Action::ExternalUrl { url, .. }))
-        | Trigger::EncoderLongPress(Some(Action::ExternalUrl { url, .. })) => {
-            let label = format!("url:{url}");
-            return performer
-                .open_url(url)
-                .map_or_else(Outcome::Failed, |_| Outcome::Sent(label));
+        if let Some((key, binding)) = keys.iter().find_map(|key| bindings.get(key).map(|b| (key, b)))
+        {
+            return match parse_binding(binding) {
+                Some(step) => perform(&step, performer),
+                None => Outcome::Failed(format!("binding for {key} is malformed: {binding}")),
+            };
         }
-        _ => {}
+        return match action.as_ref().and_then(|a| payload(a, performer)) {
+            Some(outcome) => outcome,
+            None => Outcome::Unbound(slot.clone()),
+        };
     }
 
-    let Some(key) = lookup_key(trigger) else {
+    // payload-carrying actions elsewhere (a stick or knob bound to insert text)
+    // are already fully specified by the layout
+    if let Trigger::Act(action)
+    | Trigger::EncoderClick(Some(action))
+    | Trigger::EncoderLongPress(Some(action)) = trigger
+    {
+        if let Some(outcome) = payload(action, performer) {
+            return outcome;
+        }
+    }
+
+    let Some(keys) = lookup_keys(trigger) else {
         return Outcome::Unbound("?".to_string());
     };
     let fallback = match trigger {
@@ -248,35 +271,76 @@ pub fn dispatch(trigger: &Trigger, bindings: &Bindings, performer: &mut dyn Perf
         Trigger::Scroll(_) => Some(Step::Combo(arrow(0x28, "down"))),
         _ => None,
     };
+    run(bindings, performer, &keys, fallback)
+}
 
-    let step = match bindings.get(&key) {
-        Some(binding) => match parse_binding(binding) {
+/// Actions that carry their payload do not consult the binding table.
+fn payload(action: &Action, performer: &mut dyn Performer) -> Option<Outcome> {
+    match action {
+        Action::ComposerText { text, .. } => {
+            let label = format!("type:{text}");
+            Some(
+                performer
+                    .type_text(text)
+                    .map_or_else(Outcome::Failed, |_| Outcome::Sent(label)),
+            )
+        }
+        Action::ExternalUrl { url, .. } => {
+            let label = format!("url:{url}");
+            Some(
+                performer
+                    .open_url(url)
+                    .map_or_else(Outcome::Failed, |_| Outcome::Sent(label)),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Resolve `keys` in order and perform the first binding that exists.
+fn run(
+    bindings: &Bindings,
+    performer: &mut dyn Performer,
+    keys: &[String],
+    fallback: Option<Step>,
+) -> Outcome {
+    let Some(primary) = keys.first() else {
+        return Outcome::Unbound("?".to_string());
+    };
+    let step = match keys.iter().find_map(|key| bindings.get(key).map(|b| (key, b))) {
+        Some((key, binding)) => match parse_binding(binding) {
             Some(step) => step,
             None => return Outcome::Failed(format!("binding for {key} is malformed: {binding}")),
         },
         None => match fallback {
             Some(step) => step,
-            None => return Outcome::Unbound(key),
+            // report the key the user should bind: the slot for a keycap, the
+            // action id for everything else
+            None => return Outcome::Unbound(primary.clone()),
         },
     };
 
+    perform(&step, performer)
+}
+
+fn perform(step: &Step, performer: &mut dyn Performer) -> Outcome {
     match step {
         Step::Combo(combo) => {
             let label = combo.label.clone();
             performer
-                .send_combo(&combo)
+                .send_combo(combo)
                 .map_or_else(Outcome::Failed, |_| Outcome::Sent(label))
         }
         Step::Text(text) => {
             let label = format!("type:{text}");
             performer
-                .type_text(&text)
+                .type_text(text)
                 .map_or_else(Outcome::Failed, |_| Outcome::Sent(label))
         }
         Step::Url(url) => {
             let label = format!("url:{url}");
             performer
-                .open_url(&url)
+                .open_url(url)
                 .map_or_else(Outcome::Failed, |_| Outcome::Sent(label))
         }
     }
@@ -301,14 +365,14 @@ fn action_key(action: &Action) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct Recording {
-        combos: Vec<String>,
-        texts: Vec<String>,
-        urls: Vec<String>,
+    pub struct Recording {
+        pub combos: Vec<String>,
+        pub texts: Vec<String>,
+        pub urls: Vec<String>,
     }
 
     impl Performer for Recording {
@@ -459,6 +523,41 @@ mod tests {
             dispatch(&Trigger::EncoderClick(None), &Bindings::default(), &mut performer),
             Outcome::Unbound("encoder:click".into())
         );
+    }
+
+    #[test]
+    fn a_bare_slot_key_can_be_bound() {
+        // the reported bug: separate microphone keys on, ACT11 carries an empty
+        // keycap, so the catalogue gives it no action at all. Its slot id is the
+        // only thing that can give the second microphone switch a job.
+        let mut bindings = Bindings::defaults();
+        bindings.set("ACT11", "space");
+        let mut performer = Recording::default();
+        let outcome = dispatch(
+            &Trigger::Keycap {
+                slot: "ACT11".into(),
+                action: None,
+            },
+            &bindings,
+            &mut performer,
+        );
+        assert_eq!(outcome, Outcome::Sent("space".into()));
+        assert_eq!(performer.combos, vec!["space"]);
+    }
+
+    #[test]
+    fn an_unassigned_slot_reports_itself() {
+        let mut performer = Recording::default();
+        let outcome = dispatch(
+            &Trigger::Keycap {
+                slot: "ACT11".into(),
+                action: None,
+            },
+            &Bindings::defaults(),
+            &mut performer,
+        );
+        assert_eq!(outcome, Outcome::Unbound("ACT11".into()));
+        assert!(performer.combos.is_empty());
     }
 
     #[test]

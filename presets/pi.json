@@ -1,5 +1,8 @@
 {
   "bindings": {
+    "ACT07": "enter",
+    "ACT08": "escape",
+    "ACT12": "enter",
     "composer.submit": "enter",
     "approval.approve": "enter",
     "approval.decline": "escape"

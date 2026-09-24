@@ -1,5 +1,8 @@
 {
   "bindings": {
+    "ACT07": "y",
+    "ACT08": "d",
+    "ACT12": "enter",
     "composer.submit": "enter",
     "approval.approve": "y",
     "approval.decline": "d",

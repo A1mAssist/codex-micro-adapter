@@ -306,8 +306,9 @@ function keycapCell(slotId, { merged = false } = {}) {
   cell.className = "cell keycap";
   cell.dataset.slot = slotId;
   cell.style.gridColumn = merged ? "span 2" : "";
-  cell.title = `${slotId} · ${slotActionLabel(slot)}`;
-  cell.setAttribute("aria-label", `${slotActionLabel(slot)} on ${slotId}`);
+  const what = slotBindingLabel(slotId, slot) || slotActionLabel(slot);
+  cell.title = `${slotId} · ${what}`;
+  cell.setAttribute("aria-label", `${what} on ${slotId}`);
   const plate = document.createElement("span");
   plate.className = "plate";
   plate.dataset.unassigned = String(!slot.keycapId);
@@ -357,11 +358,30 @@ function ledCell() {
 
 // ------------------------------------------------------------ keycap editor
 
+/** The binding a slot itself answers to (`ACT06`...`ACT12`), if the user set one. */
+function slotBinding(slotId) {
+  return (app.config?.bindings || {})[slotId] || "";
+}
+
+/**
+ * What pressing this slot actually does, in the order the host resolves it:
+ * the slot binding, then the keycap's own action, then nothing.
+ */
+function slotBindingLabel(slotId, slot) {
+  const binding = slotBinding(slotId);
+  if (binding) return binding;
+  const command = slot?.action?.type === "command" ? slot.action.value : slot?.commandId;
+  if (command) return command;
+  if (slot?.keycapId === "MIC" || slot?.keycapId === "MIC1") return "push to talk";
+  return "";
+}
+
 function openKeycapDialog(slotId) {
   const slot = app.config.layout.slots?.[slotId] || { keycapId: "" };
   editing = { slotId, keycapId: slot.keycapId || "", action: slot.action || null, text: slot.action?.value?.text || "" };
   $("keycap-subtitle").textContent = `Choose what appears on ${slotId}`;
   $("keycap-search").value = "";
+  $("keycap-binding").value = slotBinding(slotId);
   renderKeycapGrid();
   renderActionPicker();
   $("keycap-dialog").showModal();
@@ -404,6 +424,9 @@ function renderActionPicker() {
   const select = $("keycap-action");
   select.innerHTML = "";
   const options = [["", "Use keycap default"], ["composer-text", "Insert text…"]];
+  // The keycap's own action is only the fallback: the slot binding above is what
+  // decides what a harness actually receives, so offer the catalogue as-is
+  // instead of a hand-picked subset.
   const commands = new Map();
   for (const cap of KEYCAPS) if (cap.command) commands.set(cap.command, cap.label);
   for (const [command, label] of commands) options.push([`command:${command}`, label]);
@@ -430,6 +453,13 @@ function commitKeycapEditor() {
       : value === "composer-text"
         ? { type: "composer-text", value: { label: `Insert ${$("keycap-text").value}`, text: $("keycap-text").value } }
         : { type: "command", value: value.slice("command:".length) };
+
+  // The slot binding is what the host reads first, so it is what makes a key
+  // work in whatever harness is focused. An empty box removes the binding.
+  app.config.bindings = app.config.bindings || {};
+  const binding = $("keycap-binding").value.trim();
+  if (binding) app.config.bindings[slotId] = binding;
+  else delete app.config.bindings[slotId];
 
   layout.slots = layout.slots || {};
   layout.slots[slotId] = { keycapId: editing.keycapId, commandId: null, action };
@@ -594,6 +624,11 @@ $("reset-layout").addEventListener("click", () => {
     "Reset layout",
     () => {
       app.config.layout = { ...app.config.layout, ...defaultLayout() };
+      // the slot bindings are what actually drive a harness, so a reset that
+      // left them behind would not visibly change what the keys do
+      for (const slot of ["ACT06", "ACT07", "ACT08", "ACT09", "ACT10", "ACT11", "ACT10_ACT11", "ACT12"]) {
+        delete app.config.bindings?.[slot];
+      }
       saveConfig();
     },
   );

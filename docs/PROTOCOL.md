@@ -58,7 +58,7 @@ Notifications (device → host, same framing, no `id`):
 | method | params | meaning |
 | --- | --- | --- |
 | `v.oai.hid` | `{"k":"ACT06","act":1,"ag":…}` | key event: `act` 1 = press, 0 = release, 2 = encoder tick |
-| `v.oai.rad` | `{"a":0,"d":0.9}` | analog stick: angle in degrees, distance 0..1 |
+| `v.oai.rad` | `{"a":0.25,"d":1.0}` | analog stick: `a` is turns (`0` right, `0.25` down, `0.5` left, `0.75` up), `d` is deflection 0..1 |
 
 Encoder keys are `ENC_CW`, `ENC_CC`, `ENC_CLK`; agent keys are `AG00`–`AG05`;
 keycaps sit in slots `ACT06`–`ACT12`, with `ACT10_ACT11` replacing `ACT10`/`ACT11`
@@ -116,8 +116,12 @@ EMPT1…EMPT4 SETUP FOLD UPL APPS YOLO YEET EMPT5`. Defaults: `ACT06=FAST`,
 `ACT07=APPR`, `ACT08=REJ`, `ACT09=SPLIT`, `ACT10=MIC1`, `ACT11=EMPT1`,
 `ACT10_ACT11=MIC`, `ACT12=CODEX`.
 
+A slot is a binding key in its own right: the host looks up `ACT06`…`ACT12`
+before falling back to the keycap's own action, and a slot whose keycap carries
+no action (a bare `ACT11`) still resolves through its own id.
+
 Analog stick directions are `up`, `right`, `down`, `left` with a dead zone of
-`0.05`; the app's default commands are `composer.togglePlanMode`,
+`0.5`; the app's default commands are `composer.togglePlanMode`,
 `navigateForward`, `toggleSidebar`, `navigateBack`.
 
 The knob (`layout.encoderMode`) is one of:
