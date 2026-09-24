@@ -44,7 +44,9 @@ session end all forward `session_id`; nothing else to configure.
 | `SessionEnd` | Off, key released |
 
 Preset: [`presets/claude-code.json`](../presets/claude-code.json) - `enter`
-confirms, `escape` declines, `shift+tab` cycles the permission mode.
+confirms, `escape` declines, `shift+tab` cycles the permission mode, and the
+microphone switches both send `space`, which its own keymap binds to
+`voice:pushToTalk`.
 
 ## Codex CLI
 
@@ -69,8 +71,9 @@ for one run with `--dangerously-bypass-hook-trust`.
 | `Stop` | Unread |
 | `SessionEnd` | Off, key released |
 
-No keyboard preset yet: the Codex CLI keymap has not been verified against its
-own binary, and guessing it would be worse than leaving it unbound.
+Preset: [`presets/codex-cli.json`](../presets/codex-cli.json) - `y` approves,
+`d` denies, `shift+tab` cycles the collaboration mode, `alt+.`/`alt+,` move the
+reasoning effort.
 
 ## Pi
 

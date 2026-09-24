@@ -468,7 +468,11 @@ function commitKeycapEditor() {
   const keep = new Set([slotId, layout.separateMicrophoneKeys ? "" : "ACT10_ACT11"]);
   for (const [other, slot] of Object.entries(layout.slots)) {
     if (keep.has(other) || !editing.keycapId) continue;
-    if (slot.keycapId === editing.keycapId) layout.slots[other] = { keycapId: "EMPT1", commandId: null, action: null };
+    if (slot.keycapId === editing.keycapId) {
+      layout.slots[other] = { keycapId: "EMPT1", commandId: null, action: null };
+      // the slot is visually empty now, so it must not still fire a key
+      delete app.config.bindings?.[other];
+    }
   }
   saveConfig();
 }
