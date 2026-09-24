@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Codex Micro",
+  "productName": "Codex Micro Adapter",
   "version": "0.1.0",
   "identifier": "dev.a1massist.codex-micro",
   "build": {
@@ -9,7 +9,7 @@
   "app": {
     "windows": [
       {
-        "title": "Codex Micro",
+        "title": "Codex Micro Adapter",
         "width": 1180,
         "height": 800,
         "minWidth": 940,
