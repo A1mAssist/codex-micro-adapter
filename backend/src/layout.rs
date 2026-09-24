@@ -26,8 +26,12 @@ pub const AGENT_SLOTS: [&str; 6] = ["AG00", "AG01", "AG02", "AG03", "AG04", "AG0
 /// Analog stick directions, as stored in `config.toml`.
 pub const STICK_DIRECTIONS: [&str; 4] = ["up", "right", "down", "left"];
 
-/// Joystick dead zone (`H` in `service-C6nm9ayu.js`).
-pub const STICK_DEAD_ZONE: f32 = 0.05;
+/// Joystick dead zone.
+///
+/// The vendor's `lqs` (in `app-initial-*.js`) rejects a sample below `0.5`
+/// before it ever looks at the angle, so a real device rests at half
+/// deflection and only the far half of the travel is reported.
+pub const STICK_DEAD_ZONE: f32 = 0.5;
 
 /// What a key does.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -541,32 +545,33 @@ pub fn resolve_event(event: &HidEvent, layout: &Layout) -> Option<Trigger> {
     }
 }
 
-/// Nearest of the four stick directions.
+/// Nearest of the four stick directions, ported from the vendor's `lqs`.
 ///
-/// ponytail: assumes the firmware reports degrees clockwise from "up", which is
-/// the only convention consistent with the up/right/down/left binding names.
-/// If a real device disagrees, this one function is the only place to fix.
-pub fn stick_direction(angle_degrees: f32) -> &'static str {
-    let a = angle_degrees.rem_euclid(360.0);
-    if a < 45.0 || a >= 315.0 {
+/// The angle is a fraction of a full turn, not degrees: `0.0` is right, `0.25`
+/// down, `0.5` left and `0.75` up, and the vendor cuts the circle into eighths.
+/// Reading it as degrees collapsed every push onto "up" - the whole travel sat
+/// below the first bucket.
+pub fn stick_direction(angle: f32) -> &'static str {
+    let a = angle.rem_euclid(1.0);
+    if (0.625..0.875).contains(&a) {
         "up"
-    } else if a < 135.0 {
-        "right"
-    } else if a < 225.0 {
+    } else if (0.125..0.375).contains(&a) {
         "down"
-    } else {
+    } else if (0.375..0.625).contains(&a) {
         "left"
+    } else {
+        "right"
     }
 }
 
 /// Resolve a stick position, honouring the dead zone.
-pub fn resolve_stick(angle_degrees: f32, distance: f32, layout: &Layout) -> Option<Trigger> {
-    if distance <= STICK_DEAD_ZONE {
+pub fn resolve_stick(angle: f32, distance: f32, layout: &Layout) -> Option<Trigger> {
+    if distance < STICK_DEAD_ZONE {
         return None;
     }
     layout
         .analog_stick
-        .get(stick_direction(angle_degrees))
+        .get(stick_direction(angle))
         .cloned()
         .map(Trigger::Stick)
 }
@@ -773,16 +778,17 @@ mod tests {
             "up".into(),
             Action::Command("composer.increaseReasoningEffort".into()),
         );
-        assert_eq!(resolve_stick(0.0, 0.0, &layout), None, "inside dead zone");
+        assert_eq!(resolve_stick(0.75, 0.49, &layout), None, "inside dead zone");
         assert_eq!(
-            resolve_stick(0.0, 0.9, &layout),
+            resolve_stick(0.75, 0.9, &layout),
             Some(Trigger::Stick(Action::Command(
                 "composer.increaseReasoningEffort".into()
-            )))
+            ))),
+            "0.75 of a turn is up"
         );
         layout.analog_stick.remove("down");
         assert_eq!(
-            resolve_stick(180.0, 0.9, &layout),
+            resolve_stick(0.25, 0.9, &layout),
             None,
             "an unbound direction does nothing"
         );
@@ -819,12 +825,18 @@ mod tests {
 
     #[test]
     fn stick_direction_buckets() {
-        assert_eq!(stick_direction(0.0), "up");
-        assert_eq!(stick_direction(44.0), "up");
-        assert_eq!(stick_direction(46.0), "right");
-        assert_eq!(stick_direction(90.0), "right");
-        assert_eq!(stick_direction(180.0), "down");
-        assert_eq!(stick_direction(270.0), "left");
-        assert_eq!(stick_direction(359.0), "up");
+        // the vendor's own eighths, straight out of `lqs`
+        assert_eq!(stick_direction(0.75), "up");
+        assert_eq!(stick_direction(0.8), "up");
+        assert_eq!(stick_direction(0.0), "right");
+        assert_eq!(stick_direction(0.05), "right");
+        assert_eq!(stick_direction(0.9), "right");
+        assert_eq!(stick_direction(0.25), "down");
+        assert_eq!(stick_direction(0.5), "left");
+        assert_eq!(
+            stick_direction(1.75),
+            "up",
+            "a wrap-around sample still lands in a bucket"
+        );
     }
 }

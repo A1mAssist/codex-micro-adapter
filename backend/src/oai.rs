@@ -148,10 +148,11 @@ pub struct HidEvent {
 /// Joystick event from `v.oai.rad`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct JoystickEvent {
-    /// angle, degrees
+    /// Angle as a fraction of a turn: 0 right, 0.25 down, 0.5 left, 0.75 up.
     #[serde(rename = "a")]
     pub angle: f32,
-    /// distance from centre, 0..=1
+    /// Distance from centre, 0..=1. The device rests near 0.5, so the vendor
+    /// halves the travel before it reads a direction at all.
     #[serde(rename = "d")]
     pub distance: f32,
 }
