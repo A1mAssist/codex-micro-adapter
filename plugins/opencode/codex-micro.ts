@@ -18,13 +18,36 @@ const STATUS: Record<string, string> = {
   "session.deleted": "end",
 };
 
-function report(session: string, status: string) {
-  const socket = net.connect({
-    host: "127.0.0.1",
-    port: Number(process.env.CODEX_MICRO_PORT ?? 27700),
+function send(line: string): Promise<string> {
+  return new Promise((resolve) => {
+    const socket = net.connect({
+      host: "127.0.0.1",
+      port: Number(process.env.CODEX_MICRO_PORT ?? 27700),
+    });
+    let reply = "";
+    const finish = () => {
+      socket.destroy();
+      resolve(reply.trim());
+    };
+    socket.setTimeout(300, finish);
+    socket.on("error", finish);
+    socket.on("connect", () => socket.write(`${line}\n`));
+    socket.on("data", (chunk) => {
+      reply += chunk;
+      if (reply.includes("\n")) finish();
+    });
+    socket.on("end", finish);
   });
-  socket.on("error", () => {});
-  socket.on("connect", () => socket.end(`session ${session} ${status}\n`));
+}
+
+async function report(session: string, status: string) {
+  const rawAgent = process.env.CODEX_MICRO_AGENT;
+  const agent = rawAgent == null || rawAgent === "" ? null : Number(rawAgent);
+  if (agent != null && Number.isInteger(agent) && agent >= 0 && agent <= 5) {
+    const reply = await send(`pin ${session} ${agent}`);
+    if (!reply.startsWith("ok")) return;
+  }
+  await send(`session ${session} ${status}`);
 }
 
 export const CodexMicro = async () => ({
@@ -35,6 +58,6 @@ export const CodexMicro = async () => ({
   }) => {
     const status = STATUS[event?.type];
     const session = event?.properties?.sessionID;
-    if (status && session) report(session, status);
+    if (status && session) await report(session, status);
   },
 });

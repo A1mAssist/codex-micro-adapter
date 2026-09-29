@@ -9,6 +9,7 @@
 // --experimental-strip-types).
 import net from "node:net";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,14 +17,20 @@ const received = [];
 
 const server = net.createServer((socket) => {
   let buffer = "";
-  socket.on("data", (chunk) => (buffer += chunk));
-  socket.on("end", () => {
-    const line = buffer.trim();
-    if (line) received.push(line);
+  let answered = false;
+  socket.on("data", (chunk) => {
+    buffer += chunk;
+    const end = buffer.indexOf("\n");
+    if (end >= 0 && !answered) {
+      answered = true;
+      received.push(buffer.slice(0, end));
+      socket.end("ok\n");
+    }
   });
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 process.env.CODEX_MICRO_PORT = String(server.address().port);
+delete process.env.CODEX_MICRO_AGENT;
 
 let failures = 0;
 
@@ -64,6 +71,16 @@ await expect("pi lifecycle events", [
   "session pi-1 end",
 ]);
 
+process.env.CODEX_MICRO_AGENT = "2";
+handlers.get("session_start")(undefined, {
+  sessionManager: { getSessionId: () => "pi-pinned" },
+});
+await expect("pi pins the session before reporting its state", [
+  "pin pi-pinned 2",
+  "session pi-pinned idle",
+]);
+delete process.env.CODEX_MICRO_AGENT;
+
 // --- opencode plugin -------------------------------------------------------
 const opencode = (await import(pathToFileURL(path.join(root, "plugins/opencode/codex-micro.ts")).href)).CodexMicro;
 const plugin = await opencode();
@@ -78,6 +95,14 @@ await expect("opencode session events", [
   "session oc-1 awaiting-approval",
   "session oc-1 end",
 ]);
+
+process.env.CODEX_MICRO_AGENT = "4";
+await plugin.event({ event: { type: "session.created", properties: { sessionID: "oc-pinned" } } });
+await expect("opencode pins the session before reporting its state", [
+  "pin oc-pinned 4",
+  "session oc-pinned idle",
+]);
+delete process.env.CODEX_MICRO_AGENT;
 
 // an event we do not map must send nothing at all
 await plugin.event({ event: { type: "message.updated", properties: { sessionID: "oc-1" } } });
@@ -122,6 +147,14 @@ await expect("dsh lifecycle seams", [
   "session dsh-1 end",
 ]);
 
+process.env.CODEX_MICRO_AGENT = "1";
+seam("agent/created", { agent: { session: { header: { id: "dsh-pinned" } } } });
+await expect("dsh pins the session before reporting its state", [
+  "pin dsh-pinned 1",
+  "session dsh-pinned idle",
+]);
+delete process.env.CODEX_MICRO_AGENT;
+
 // Waterfall seams must call next(): swallowing one stalls the harness.
 if (!seamsCalled.slice(1, 4).every(Boolean)) {
   console.log("FAIL dsh dropped a waterfall request instead of calling next()");
@@ -137,6 +170,30 @@ for (const header of [{ id: "dsh-sub", origin: "subagent" }, { id: "dsh-deep", d
 seam("agent/created", { agent: { session: { header: { id: "dsh-main" } } } });
 
 await expect("dsh skips subagents", ["session dsh-main idle"]);
+
+const hook = spawn(
+  process.execPath,
+  [path.join(root, "plugins/codex-micro/hooks/report.mjs"), "working"],
+  {
+    env: {
+      ...process.env,
+      CODEX_MICRO_AGENT: "3",
+      CODEX_MICRO_SESSION: "hook-pinned",
+    },
+    stdio: ["pipe", "ignore", "inherit"],
+  },
+);
+hook.stdin.end();
+const hookExit = new Promise((resolve) => hook.once("exit", resolve));
+await expect("shared hook pins the session before reporting its state", [
+  "pin hook-pinned 3",
+  "session hook-pinned working",
+]);
+const hookCode = await hookExit;
+if (hookCode !== 0) {
+  console.log(`FAIL shared hook exited with ${hookCode}`);
+  failures += 1;
+}
 
 // --- dsh browser half ------------------------------------------------------
 // The page poll, the clock and the two stores the page reads are all fakes here.

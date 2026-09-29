@@ -19,41 +19,48 @@ pub const POLL_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long the knob has to be held before the press counts as a hold. The app
 /// uses the same 500ms (`wn` in `codex-micro-bridge`).
 pub const ENCODER_LONG_PRESS: Duration = Duration::from_millis(500);
-/// How often a `hold:` key repeats while it is down.
-///
-/// ponytail: one fixed rate for every hold. A real keyboard waits 500ms then
-/// repeats about 30x a second; what actually needs the repeat is a harness that
-/// watches for it - Claude Code's push-to-talk gives up 600ms after the press
-/// when no repeat arrives - so 10x a second is enough for both that and typing.
-/// Split into delay + rate if a harness ever cares about the difference.
-pub const HOLD_REPEAT: Duration = Duration::from_millis(100);
+/// A `hold:` key stays quiet for this long after the press, then repeats.
+pub const HOLD_DELAY: Duration = Duration::from_millis(500);
+/// How often a `hold:` key repeats once the delay has passed: the 30/s a real
+/// keyboard uses. The first repeat still lands inside Claude Code's 600 ms
+/// push-to-talk window, which is what fixed-rate 100 ms was covering.
+pub const HOLD_RATE: Duration = Duration::from_millis(33);
 
-/// The key a `hold:` binding currently has down, and when it last repeated.
+/// The key a `hold:` binding currently has down, and when it was pressed or last repeated.
 ///
 /// Kept out of `Host` so the press / repeat / release edges are testable without
 /// a device: the repeat is what a harness watching for auto-repeat needs, and
 /// getting it wrong is silent.
 #[derive(Default)]
 struct HoldState {
+    /// The held key and when it was pressed.
     down: Option<(Combo, Instant)>,
+    /// The last repeat, so the rate can be honoured after the delay.
+    last_repeat: Option<Instant>,
 }
 
 impl HoldState {
     /// Put a key down. Any previous hold is returned so the caller can release it
     /// first - two holds at once would leave the first one stuck.
     fn press(&mut self, combo: Combo, now: Instant) -> Option<Combo> {
-        let previous = self.down.replace((combo, now)).map(|(combo, _)| combo);
-        previous
+        self.last_repeat = None;
+        self.down.replace((combo, now)).map(|(combo, _)| combo)
     }
 
-    /// The key to repeat right now, if a held key is due.
+    /// The key to repeat right now: nothing before `HOLD_DELAY`, then one every
+    /// `HOLD_RATE`.
     fn repeat(&mut self, now: Instant) -> Option<Combo> {
-        let (combo, last) = self.down.as_mut()?;
-        if now.duration_since(*last) < HOLD_REPEAT {
+        let pressed_at = self.down.as_ref()?.1;
+        if now.duration_since(pressed_at) < HOLD_DELAY {
             return None;
         }
-        *last = now;
-        Some(combo.clone())
+        if let Some(last) = self.last_repeat {
+            if now.duration_since(last) < HOLD_RATE {
+                return None;
+            }
+        }
+        self.last_repeat = Some(now);
+        Some(self.down.as_ref()?.0.clone())
     }
 
     /// Let `combo` up. Only a hold of that same key is released, so a release
@@ -61,6 +68,7 @@ impl HoldState {
     fn release(&mut self, combo: &Combo) -> Option<Combo> {
         match &self.down {
             Some((held, _)) if held.vk == combo.vk && held.modifiers == combo.modifiers => {
+                self.last_repeat = None;
                 self.down.take().map(|(combo, _)| combo)
             }
             _ => None,
@@ -69,6 +77,7 @@ impl HoldState {
 
     /// Whatever is still down, for a device that vanished mid-hold.
     fn cancel(&mut self) -> Option<Combo> {
+        self.last_repeat = None;
         self.down.take().map(|(combo, _)| combo)
     }
 }
@@ -181,7 +190,7 @@ fn describe_state(state: &DeviceState) -> String {
 }
 
 /// What the desktop UI reads: everything it shows, in one value.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub status: String,
@@ -206,8 +215,6 @@ pub struct Snapshot {
 /// lowest-first; when all six are taken the dullest owner loses its key, because
 /// a harness that crashed will never release anything.
 ///
-/// ponytail: steal-the-oldest policy, no per-session pinning — add pinning when
-/// somebody actually wants a fixed key per project.
 #[derive(Default)]
 struct SessionSlots {
     owners: Vec<Option<String>>,
@@ -215,6 +222,9 @@ struct SessionSlots {
     /// The window that was in front while this session last reported activity,
     /// so tapping its agent key can bring the session back.
     windows: Vec<Option<isize>>,
+    /// `pin <session> <n>`: the session always gets this key, and `assign`
+    /// never steals it for anyone else.
+    pinned: Vec<Option<String>>,
 }
 
 impl SessionSlots {
@@ -223,6 +233,7 @@ impl SessionSlots {
             owners: vec![None; count],
             touched: vec![Instant::now(); count],
             windows: vec![None; count],
+            pinned: vec![None; count],
         }
     }
 
@@ -245,25 +256,40 @@ impl SessionSlots {
 
     /// The key `id` should use, claiming or stealing one if it has none.
     /// `slots` is only read, to work out which key is safest to take over.
-    fn assign(&mut self, id: &str, slots: &[AgentSlot], now: Instant) -> usize {
+    fn assign(&mut self, id: &str, slots: &[AgentSlot], now: Instant) -> Option<usize> {
         if let Some(index) = self.index_of(id) {
             self.touched[index] = now;
-            return index;
+            return Some(index);
         }
+        // a pinned session gets its own key back, whoever sits there now
+        if let Some(index) = self.pin_of(id) {
+            self.owners[index] = Some(id.to_string());
+            self.touched[index] = now;
+            return Some(index);
+        }
+        // free keys first, but never one another session has pinned
         let index = self
             .owners
             .iter()
-            .position(Option::is_none)
-            .unwrap_or_else(|| self.victim(slots));
+            .enumerate()
+            .position(|(index, owner)| owner.is_none() && self.pinned[index].is_none())
+            .or_else(|| self.victim(slots))?;
         self.owners[index] = Some(id.to_string());
         self.touched[index] = now;
-        index
+        Some(index)
     }
 
     /// Give the key back. `None` when this session never had one.
     fn release(&mut self, id: &str) -> Option<usize> {
-        let index = self.index_of(id)?;
-        self.owners[index] = None;
+        // A manual `agent <n>` can clear the owner while retaining its pin.
+        // Session end must still find and release that reserved key.
+        let index = self.index_of(id).or_else(|| self.pin_of(id))?;
+        if self.owners[index].as_deref() == Some(id) {
+            self.owners[index] = None;
+        }
+        if self.pinned[index].as_deref() == Some(id) {
+            self.pinned[index] = None;
+        }
         if let Some(window) = self.windows.get_mut(index) {
             *window = None;
         }
@@ -271,6 +297,7 @@ impl SessionSlots {
     }
 
     /// A manual `agent <n> …` takes the key back from whichever session had it.
+    /// A pin survives: `pin` is how the user says this key belongs to a session.
     fn clear(&mut self, index: usize) {
         if let Some(owner) = self.owners.get_mut(index) {
             *owner = None;
@@ -280,19 +307,47 @@ impl SessionSlots {
         }
     }
 
+    /// Pin a session to a key (and unpin whatever was pinned there before).
+    fn pin(&mut self, id: &str, index: usize) -> Result<(), String> {
+        if index >= self.pinned.len() {
+            return Err(format!("agent {index} does not exist"));
+        }
+        if let Some(owner) = self.pinned[index].as_deref() {
+            if owner != id {
+                return Err(format!("agent {index} is pinned to session {owner}"));
+            }
+        }
+        // one session, one pin: moving it frees the old key
+        for slot in self.pinned.iter_mut() {
+            if slot.as_deref() == Some(id) {
+                *slot = None;
+            }
+        }
+        self.pinned[index] = Some(id.to_string());
+        Ok(())
+    }
+
+    fn pin_of(&self, id: &str) -> Option<usize> {
+        self.pinned
+            .iter()
+            .position(|pin| pin.as_deref() == Some(id))
+    }
+
     fn index_of(&self, id: &str) -> Option<usize> {
-        self.owners.iter().position(|owner| owner.as_deref() == Some(id))
+        self.owners
+            .iter()
+            .position(|owner| owner.as_deref() == Some(id))
     }
 
     /// The key to take over: the dullest status first (`off`, then idle, …),
     /// oldest first within the same status.
-    fn victim(&self, slots: &[AgentSlot]) -> usize {
+    fn victim(&self, slots: &[AgentSlot]) -> Option<usize> {
         (0..self.owners.len())
+            .filter(|&index| self.pinned[index].is_none())
             .min_by_key(|&index| {
                 let status = slots.get(index).map_or(SlotStatus::Off, |slot| slot.status);
                 (interest(status), self.touched[index])
             })
-            .unwrap_or(0)
     }
 }
 
@@ -468,7 +523,9 @@ impl<O: Opener> Host<O> {
                     self.device.set_slots(self.slots.clone());
                     return format!("ok session {id} agent {index} off");
                 };
-                let index = self.sessions.assign(&id, &self.slots, Instant::now());
+                let Some(index) = self.sessions.assign(&id, &self.slots, Instant::now()) else {
+                    return format!("err: no unpinned agent key available for session {id}");
+                };
                 let Some(slot) = self.slots.get_mut(index) else {
                     return format!("err: no agent key to give session {id}");
                 };
@@ -486,6 +543,43 @@ impl<O: Opener> Host<O> {
                 }
                 self.device.set_slots(self.slots.clone());
                 format!("ok session {id} agent {index} {}", status.to_token())
+            }
+            Command::Window { id, hwnd } => {
+                let Some(index) = self.sessions.index_of(&id) else {
+                    return format!("err: session {id} holds no key");
+                };
+                self.sessions.set_window(index, hwnd);
+                format!("ok window {id}")
+            }
+            Command::Pin { id, index } => {
+                if index >= self.slots.len() {
+                    return format!("err: agent {index} does not exist");
+                }
+                let previous = self.sessions.index_of(&id);
+                let previous_pin = self.sessions.pin_of(&id);
+                let previous_status =
+                    previous.map_or(SlotStatus::Idle, |old| self.slots[old].status);
+                let previous_window = previous.and_then(|old| self.sessions.window(old));
+                if let Err(err) = self.sessions.pin(&id, index) {
+                    return format!("err: {err}");
+                }
+                if self.sessions.index_of(&id) == Some(index) {
+                    return format!("ok pin {id} agent {index}");
+                }
+                if let Some(old) = previous.or(previous_pin).filter(|old| *old != index) {
+                    self.sessions.clear(old);
+                    self.slots[old].status = SlotStatus::Off;
+                }
+                self.sessions.clear(index);
+                // pinning is claiming: the session takes the key right away
+                self.sessions.owners[index] = Some(id.clone());
+                self.sessions.touched[index] = Instant::now();
+                self.slots[index].status = previous_status;
+                if let Some(hwnd) = previous_window {
+                    self.sessions.set_window(index, hwnd);
+                }
+                self.device.set_slots(self.slots.clone());
+                format!("ok pin {id} agent {index}")
             }
             Command::Fleet(status) => {
                 self.fleet = status;
@@ -540,7 +634,14 @@ impl<O: Opener> Host<O> {
                 events.push(HostEvent::Device(event));
             }
         }
-        for event in self.device.poll(timeout) {
+        // The 33 ms repeat rate needs a tighter read cadence while held; the
+        // normal idle poll remains at 50 ms to avoid waking the loop needlessly.
+        let poll_timeout = if self.held.down.is_some() {
+            timeout.min(Duration::from_millis(16))
+        } else {
+            timeout
+        };
+        for event in self.device.poll(poll_timeout) {
             self.dispatch(event, now, &mut events);
         }
         // a press whose release never arrives (unplugged mid-hold) must not fire
@@ -581,9 +682,12 @@ impl<O: Opener> Host<O> {
     /// on the spot.
     fn run(&mut self, trigger: Trigger) -> HostEvent {
         match actions::dispatch(&trigger, &self.bindings, self.performer.as_mut()) {
-            Outcome::Hold { combo, down } => {
-                HostEvent::Action(apply_hold(&mut self.held, self.performer.as_mut(), combo, down))
-            }
+            Outcome::Hold { combo, down } => HostEvent::Action(apply_hold(
+                &mut self.held,
+                self.performer.as_mut(),
+                combo,
+                down,
+            )),
             // a `plugin:` binding is not a keystroke: hand it to the feed a
             // harness page polls, and let that plugin do the work
             Outcome::Plugin(event) => {
@@ -647,29 +751,28 @@ impl<O: Opener> Host<O> {
             other => out.push(self.run(other)),
         }
     }
-/// Mirror a trigger's press state into the set the UI preview reads. Encoder
-/// ticks and stick pushes are momentary, so only the held edges matter.
-fn track_press(&mut self, trigger: &Trigger) {
-    match trigger {
-        Trigger::Keycap { slot, down, .. } => {
-            if *down {
-                self.pressed.insert(slot.clone());
-            } else {
-                self.pressed.remove(slot);
+    /// Mirror a trigger's press state into the set the UI preview reads. Encoder
+    /// ticks and stick pushes are momentary, so only the held edges matter.
+    fn track_press(&mut self, trigger: &Trigger) {
+        match trigger {
+            Trigger::Keycap { slot, down, .. } => {
+                if *down {
+                    self.pressed.insert(slot.clone());
+                } else {
+                    self.pressed.remove(slot);
+                }
             }
+            Trigger::EncoderPress => {
+                self.pressed.insert("ENC".into());
+            }
+            Trigger::EncoderRelease => {
+                self.pressed.remove("ENC");
+            }
+            // agent keys already show their status light; ticks, pushes and clicks
+            // are momentary, and the UI flashes on the log line instead
+            _ => {}
         }
-        Trigger::EncoderPress => {
-            self.pressed.insert("ENC".into());
-        }
-        Trigger::EncoderRelease => {
-            self.pressed.remove("ENC");
-        }
-        // agent keys already show their status light; ticks, pushes and clicks
-        // are momentary, and the UI flashes on the log line instead
-        _ => {}
     }
-}
-
 }
 
 /// What a short knob press means: the layout's own `click` action in custom mode.
@@ -694,6 +797,27 @@ fn long_press_trigger(layout: &Layout) -> Trigger {
 mod tests {
     use super::*;
 
+    /// The device is never polled in these tests, so a tiny opener that always
+    /// fails is enough; it exists only so `Host::new` has something to hold.
+    struct NoOpener;
+    impl crate::device::Opener for NoOpener {
+        type Hid = Self;
+        fn open(&mut self, _path: &str) -> Result<Self, String> {
+            Err("no device".into())
+        }
+    }
+    impl crate::rpc::Hid for NoOpener {
+        fn write_report(&mut self, _r: &[u8; crate::framing::REPORT_LEN]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn read_report(
+            &mut self,
+            _t: std::time::Duration,
+        ) -> Option<[u8; crate::framing::REPORT_LEN]> {
+            None
+        }
+    }
+
     fn encoder_layout(mode: EncoderMode, gesture: &str, action: Action) -> Layout {
         let mut layout = Layout::default();
         layout.encoder_mode = mode;
@@ -710,26 +834,121 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_session_keeps_its_key() {
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            crate::actions::Bindings::default(),
+            Box::new(crate::performer::LoggingPerformer),
+            100,
+            LightingModel::default(),
+        );
+        // six other sessions fill every key first
+        for i in 0..6 {
+            host.apply(crate::control::parse(&format!("session fill-{i} idle")).unwrap());
+        }
+        // "mine" joins (steals the dullest key), then pins a key of its own
+        host.apply(crate::control::parse("session mine idle").unwrap());
+        assert_eq!(
+            host.apply(crate::control::parse("pin mine 2").unwrap()),
+            "ok pin mine agent 2"
+        );
+        assert_eq!(host.sessions.owner(2), Some("mine"));
+        // a newer session cannot steal key 2; it takes the dullest unpinned one
+        host.apply(crate::control::parse("session other working").unwrap());
+        assert_eq!(host.sessions.owner(2), Some("mine"));
+    }
+
+    #[test]
+    fn pinning_is_idempotent_and_does_not_steal_another_pin() {
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            crate::actions::Bindings::default(),
+            Box::new(crate::performer::LoggingPerformer),
+            100,
+            LightingModel::default(),
+        );
+        host.apply(crate::control::parse("session first working").unwrap());
+        assert_eq!(
+            host.apply(crate::control::parse("pin first 2").unwrap()),
+            "ok pin first agent 2"
+        );
+        host.apply(crate::control::parse("session first working").unwrap());
+        assert_eq!(host.slots[2].status, SlotStatus::Working);
+        assert_eq!(
+            host.apply(crate::control::parse("pin first 2").unwrap()),
+            "ok pin first agent 2"
+        );
+        assert_eq!(
+            host.slots[2].status,
+            SlotStatus::Working,
+            "repeat pin keeps the live status"
+        );
+
+        host.apply(crate::control::parse("session second idle").unwrap());
+        let second_index = host.sessions.index_of("second").unwrap();
+        assert_eq!(
+            host.apply(crate::control::parse("pin second 2").unwrap()),
+            "err: agent 2 is pinned to session first"
+        );
+        assert_eq!(host.sessions.owner(2), Some("first"));
+        assert_eq!(host.sessions.owner(second_index), Some("second"));
+
+        host.apply(crate::control::parse("session first end").unwrap());
+        assert_eq!(
+            host.sessions.pin_of("first"),
+            None,
+            "ending a session releases its pin"
+        );
+        assert_eq!(host.sessions.owner(2), None);
+    }
+
+    #[test]
+    fn ending_a_manually_overridden_pinned_session_releases_its_key() {
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            crate::actions::Bindings::default(),
+            Box::new(crate::performer::LoggingPerformer),
+            100,
+            LightingModel::default(),
+        );
+        host.apply(crate::control::parse("pin fixed 3").unwrap());
+        host.apply(crate::control::parse("session fixed working").unwrap());
+        host.apply(crate::control::parse("agent 3 unread").unwrap());
+        assert_eq!(host.sessions.owner(3), None);
+        assert_eq!(host.sessions.pin_of("fixed"), Some(3));
+
+        assert_eq!(
+            host.apply(crate::control::parse("session fixed end").unwrap()),
+            "ok session fixed agent 3 off"
+        );
+        assert_eq!(host.sessions.pin_of("fixed"), None);
+        assert_eq!(host.sessions.owner(3), None);
+        assert_eq!(host.slots[3].status, SlotStatus::Off);
+    }
+
+    #[test]
+    fn a_reported_window_replaces_the_heuristic() {
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            crate::actions::Bindings::default(),
+            Box::new(crate::performer::LoggingPerformer),
+            100,
+            LightingModel::default(),
+        );
+        host.apply(crate::control::parse("session abc idle").unwrap());
+        let index = host.sessions.index_of("abc").unwrap();
+        host.apply(crate::control::Command::Window {
+            id: "abc".into(),
+            hwnd: 4242,
+        });
+        assert_eq!(host.sessions.window(index), Some(4242));
+    }
+
+    #[test]
     fn physical_presses_are_mirrored_into_the_snapshot() {
         // Host::new needs a performer; the host is not connected, so no real
         // device IO happens here - dispatch is driven by hand.
-        // the device is never polled here, so a tiny opener that always fails
-        // is enough; it exists only so Host::new has something to hold
-        struct NoOpener;
-        impl crate::device::Opener for NoOpener {
-            type Hid = Self;
-            fn open(&mut self, _path: &str) -> Result<Self, String> {
-                Err("no device".into())
-            }
-        }
-        impl crate::rpc::Hid for NoOpener {
-            fn write_report(&mut self, _r: &[u8; crate::framing::REPORT_LEN]) -> std::io::Result<()> {
-                Ok(())
-            }
-            fn read_report(&mut self, _t: std::time::Duration) -> Option<[u8; crate::framing::REPORT_LEN]> {
-                None
-            }
-        }
+
         let mut host = Host::new(
             Device::new(NoOpener, Layout::default(), LightingModel::default()),
             crate::actions::Bindings::default(),
@@ -739,13 +958,21 @@ mod tests {
         );
         let now = Instant::now();
         host.dispatch(
-            Event::Trigger(Trigger::Keycap { slot: "ACT06".into(), action: None, down: true }),
+            Event::Trigger(Trigger::Keycap {
+                slot: "ACT06".into(),
+                action: None,
+                down: true,
+            }),
             now,
             &mut Vec::new(),
         );
         assert!(host.pressed.contains("ACT06"));
         host.dispatch(
-            Event::Trigger(Trigger::Keycap { slot: "ACT06".into(), action: None, down: false }),
+            Event::Trigger(Trigger::Keycap {
+                slot: "ACT06".into(),
+                action: None,
+                down: false,
+            }),
             now,
             &mut Vec::new(),
         );
@@ -765,10 +992,13 @@ mod tests {
             apply_hold(&mut state, &mut performer, space.clone(), true),
             Outcome::Hold { down: true, .. }
         ));
-        // read the clock after the press: the press is what starts the interval
-        let mut clock = Instant::now();
-        for _ in 0..3 {
-            clock += HOLD_REPEAT;
+        // read the clock after the press: the delay, then repeats at the rate
+        let mut clock = Instant::now() + HOLD_DELAY;
+        if let Some(combo) = state.repeat(clock) {
+            performer.key_down(&combo).unwrap();
+        }
+        for _ in 0..2 {
+            clock += HOLD_RATE;
             if let Some(combo) = state.repeat(clock) {
                 performer.key_down(&combo).unwrap();
             }
@@ -809,17 +1039,23 @@ mod tests {
         let mut state = HoldState::default();
         assert!(state.press(held("space", 0x20), start).is_none());
 
-        // too soon: a real keyboard does not repeat instantly
+        // too soon: a real keyboard waits the delay before the first repeat
         assert!(state.repeat(start + Duration::from_millis(50)).is_none());
-        assert_eq!(
-            state.repeat(start + HOLD_REPEAT).map(|c| c.label),
-            Some("space".to_string()),
-            "the key repeats, which is what push-to-talk watches for"
+        assert!(
+            state.repeat(start + Duration::from_millis(499)).is_none(),
+            "the delay is honoured, not just a rate"
         );
-        assert!(state.repeat(start + HOLD_REPEAT).is_none(), "not twice at once");
+        assert_eq!(
+            state.repeat(start + HOLD_DELAY).map(|c| c.label),
+            Some("space".to_string()),
+            "the first repeat lands after the delay, inside push-to-talk's window"
+        );
+        assert!(state
+            .repeat(start + HOLD_DELAY + Duration::from_millis(10))
+            .is_none());
         assert_eq!(
             state
-                .repeat(start + HOLD_REPEAT + HOLD_REPEAT)
+                .repeat(start + HOLD_DELAY + HOLD_RATE)
                 .map(|c| c.label),
             Some("space".to_string())
         );
@@ -934,13 +1170,21 @@ mod tests {
         let now = Instant::now();
         let slots = crate::lighting::default_agent_slots();
         let mut table = SessionSlots::with_keys(6);
-        assert_eq!(table.assign("a", &slots, now), 0);
-        assert_eq!(table.assign("b", &slots, now), 1);
-        assert_eq!(table.assign("a", &slots, now), 0, "same session, same key");
+        assert_eq!(table.assign("a", &slots, now), Some(0));
+        assert_eq!(table.assign("b", &slots, now), Some(1));
+        assert_eq!(
+            table.assign("a", &slots, now),
+            Some(0),
+            "same session, same key"
+        );
         assert_eq!(table.owner(0), Some("a"));
         assert_eq!(table.release("a"), Some(0));
         assert_eq!(table.release("a"), None, "a key is only given back once");
-        assert_eq!(table.assign("c", &slots, now), 0, "the freed key is reused");
+        assert_eq!(
+            table.assign("c", &slots, now),
+            Some(0),
+            "the freed key is reused"
+        );
     }
 
     #[test]
@@ -949,12 +1193,16 @@ mod tests {
         let mut slots = crate::lighting::default_agent_slots();
         let mut table = SessionSlots::with_keys(6);
         for (step, id) in ["a", "b", "c", "d", "e", "f"].into_iter().enumerate() {
-            let index = table.assign(id, &slots, now + Duration::from_secs(step as u64));
+            let index = table
+                .assign(id, &slots, now + Duration::from_secs(step as u64))
+                .unwrap();
             slots[index].status = SlotStatus::Working;
         }
         slots[3].status = SlotStatus::Idle; // went quiet a while ago
         slots[2].status = SlotStatus::Unread; // finished, still waiting to be read
-        let index = table.assign("g", &slots, now + Duration::from_secs(60));
+        let index = table
+            .assign("g", &slots, now + Duration::from_secs(60))
+            .unwrap();
         assert_eq!(index, 3, "an idle key changes hands before an unread one");
         assert_eq!(table.owner(3), Some("g"));
     }
@@ -975,7 +1223,7 @@ mod tests {
         let now = Instant::now();
         let slots = crate::lighting::default_agent_slots();
         let mut table = SessionSlots::with_keys(6);
-        let index = table.assign("a", &slots, now);
+        let index = table.assign("a", &slots, now).unwrap();
         assert_eq!(table.window(index), None, "nothing seen yet");
         table.set_window(index, 0x1234);
         assert_eq!(table.window(index), Some(0x1234));
@@ -986,7 +1234,7 @@ mod tests {
             "a manual agent command forgets it"
         );
 
-        let index = table.assign("b", &slots, now);
+        let index = table.assign("b", &slots, now).unwrap();
         table.set_window(index, 0x5678);
         assert_eq!(table.release("b"), Some(index));
         assert_eq!(table.window(index), None, "a released key has no window");
@@ -997,12 +1245,12 @@ mod tests {
         let now = Instant::now();
         let slots = crate::lighting::default_agent_slots();
         let mut table = SessionSlots::with_keys(6);
-        let index = table.assign("a", &slots, now);
+        let index = table.assign("a", &slots, now).unwrap();
         table.clear(index);
         assert_eq!(table.owner(index), None);
         assert_eq!(
             table.assign("b", &slots, now),
-            index,
+            Some(index),
             "the freed key goes to the next session"
         );
     }

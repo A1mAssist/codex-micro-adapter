@@ -8,8 +8,8 @@
 // serves every one of them: it forwards the session id and lets the host pick
 // the agent key, and six parallel terminals need no per-shell setup.
 //
-// CODEX_MICRO_AGENT pins one key (0-5) instead, CODEX_MICRO_SESSION overrides the
-// id the host sees, CODEX_MICRO_PORT moves off 27700.
+// CODEX_MICRO_AGENT pins this session to one key (0-5), CODEX_MICRO_SESSION
+// overrides the id the host sees, CODEX_MICRO_PORT moves off 27700.
 //
 // Never fails a session: if the host is not running (or the socket is slow) the
 // hook still exits 0 straight away.
@@ -86,30 +86,49 @@ if (status) {
     payload?.sessionId ||
     payload?.properties?.sessionID ||
     "";
-  const pinned = process.env.CODEX_MICRO_AGENT;
-
-  const line = pinned
-    ? `agent ${Number(pinned)} ${status === "end" ? "off" : status}\n`
-    : session
-      ? `session ${session} ${status}\n`
-      : null;
-
-  if (line) {
+  if (session) {
     const port = Number(process.env.CODEX_MICRO_PORT ?? 27700);
-    const socket = net.connect({ host: "127.0.0.1", port });
-    const done = () => socket.destroy();
+    const send = (line) => new Promise((resolve) => {
+      const socket = net.connect({ host: "127.0.0.1", port });
+      let reply = "";
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve(reply.trim());
+      };
 
-    trace(`${line.trim()} -> 127.0.0.1:${port}`);
-    socket.setTimeout(300);
-    socket.on("connect", () => socket.end(line, done));
-    socket.on("timeout", () => {
-      trace(`timed out talking to 127.0.0.1:${port}`);
-      done();
+      trace(`${line} -> 127.0.0.1:${port}`);
+      socket.setTimeout(300, () => {
+        trace(`timed out talking to 127.0.0.1:${port}`);
+        finish();
+      });
+      socket.on("connect", () => socket.write(`${line}\n`));
+      socket.on("data", (chunk) => {
+        reply += chunk;
+        if (reply.includes("\n")) finish();
+      });
+      socket.on("end", finish);
+      socket.on("error", (error) => {
+        trace(`could not reach 127.0.0.1:${port}: ${error.message}`);
+        finish();
+      });
     });
-    socket.on("error", (error) => {
-      trace(`could not reach 127.0.0.1:${port}: ${error.message}`);
-      done();
-    });
+
+    const rawAgent = process.env.CODEX_MICRO_AGENT;
+    const agent = rawAgent == null || rawAgent === "" ? null : Number(rawAgent);
+    if (agent != null && (!Number.isInteger(agent) || agent < 0 || agent > 5)) {
+      trace(`invalid CODEX_MICRO_AGENT=${rawAgent}; using automatic assignment`);
+    }
+    const pinned = agent == null || agent < 0 || agent > 5
+      ? "ok"
+      : await send(`pin ${session} ${agent}`);
+    if (pinned.startsWith("ok")) {
+      await send(`session ${session} ${status}`);
+    } else {
+      trace(pinned || `could not pin session ${session}`);
+    }
   } else {
     trace(`nothing to send: event=${event || "(none)"}`);
   }

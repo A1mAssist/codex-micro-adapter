@@ -8,6 +8,8 @@
 //! agent 0 working          # key 0 shows the working colour
 //! agent 0 off
 //! session 7f3a working     # the host picks a free key and remembers the owner
+//! pin 7f3a 2              # reserve key 2 for this session
+//! window 7f3a 4242        # report the session's window handle
 //! session 7f3a end         # releases that key
 //! fleet awaiting-approval  # one status across the whole ring
 //! fleet off
@@ -23,7 +25,8 @@
 use crate::lighting::{SlotStatus, VoiceState};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::SyncSender;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,6 +48,19 @@ pub enum Command {
     },
     /// `None` clears the fleet-wide status.
     Fleet(Option<SlotStatus>),
+    /// `window <session-id> <hwnd>` — the plugin reports the handle of the window
+    /// it is typing in, so tapping the session's agent key focuses the right one
+    /// even when the heuristic (or a multiplexer) got it wrong.
+    Window {
+        id: String,
+        hwnd: isize,
+    },
+    /// `pin <session-id> <0-5>` — pin a session to one agent key: it always gets
+    /// that key back, and nothing else can steal it.
+    Pin {
+        id: String,
+        index: usize,
+    },
     Voice(VoiceState),
     Brightness(u8),
     Selection(bool),
@@ -94,6 +110,39 @@ pub fn parse(line: &str) -> Result<Command, String> {
             })
         }
         "activation" => Ok(Command::Activation),
+        "window" => {
+            let [id, hwnd] = args.as_slice() else {
+                return Err("usage: window <session-id> <hwnd>".to_string());
+            };
+            validate_session_id(id)?;
+            let hwnd =
+                if let Some(hex) = hwnd.strip_prefix("0x").or_else(|| hwnd.strip_prefix("0X")) {
+                    isize::from_str_radix(hex, 16)
+                } else {
+                    hwnd.parse::<isize>()
+                }
+                .map_err(|_| format!("bad window handle: {hwnd}"))?;
+            if hwnd <= 0 {
+                return Err("window handle must be positive".to_string());
+            }
+            Ok(Command::Window {
+                id: (*id).to_string(),
+                hwnd,
+            })
+        }
+        "pin" => {
+            let [id, index] = args.as_slice() else {
+                return Err("usage: pin <session-id> <0-5>".to_string());
+            };
+            validate_session_id(id)?;
+            let index = index
+                .parse::<usize>()
+                .map_err(|_| format!("bad agent index: {index}"))?;
+            Ok(Command::Pin {
+                id: (*id).to_string(),
+                index,
+            })
+        }
         "fleet" => match args.as_slice() {
             ["off"] | [] => Ok(Command::Fleet(None)),
             [status] => Ok(Command::Fleet(Some(enum_value(status)?))),
@@ -159,14 +208,27 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct Job {
     command: Command,
     reply: SyncSender<String>,
+    state: Arc<AtomicU8>,
 }
+
+const JOB_QUEUED: u8 = 0;
+const JOB_RUNNING: u8 = 1;
+const JOB_CANCELLED: u8 = 2;
 
 impl Job {
     /// Hand the command to the host, then give the host's own reply back to
     /// whoever asked. This is what keeps `codex-micro-backend send` honest: a
     /// command the host rejects comes back as `err: …`, not a cheerful `ok`.
     pub fn run(self, host: impl FnOnce(Command) -> String) -> String {
-        let message = host(self.command);
+        let message = if self
+            .state
+            .compare_exchange(JOB_QUEUED, JOB_RUNNING, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            host(self.command)
+        } else {
+            "err: command expired before the host could apply it".to_string()
+        };
         let _ = self.reply.try_send(message.clone());
         message
     }
@@ -184,10 +246,15 @@ pub type Activation = Arc<Mutex<Option<(u64, String)>>>;
 /// focus, or - for a harness that owns an API - an event its own plugin acts on.
 /// A Web UI whose buttons have no key tokens (`dsh`) is the second kind, so the
 /// host keeps a feed the page polls, the same way it answers `activation`.
+#[derive(Debug, Default)]
+struct EventLog {
+    seq: u64,
+    entries: Vec<(u64, String)>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Events {
-    seq: Arc<Mutex<u64>>,
-    log: Arc<Mutex<Vec<(u64, String)>>>,
+    log: Arc<Mutex<EventLog>>,
 }
 
 /// How many events a slow poller can fall behind before the oldest are dropped.
@@ -197,30 +264,27 @@ const EVENT_BACKLOG: usize = 64;
 impl Events {
     /// Record one `plugin:` event. Called from the device loop.
     pub fn push(&self, event: &str) {
-        let Ok(mut seq) = self.seq.lock() else { return };
-        *seq += 1;
-        let id = *seq;
-        drop(seq);
         let Ok(mut log) = self.log.lock() else { return };
-        log.push((id, event.to_string()));
-        if log.len() > EVENT_BACKLOG {
-            log.remove(0);
+        log.seq += 1;
+        let id = log.seq;
+        log.entries.push((id, event.to_string()));
+        if log.entries.len() > EVENT_BACKLOG {
+            log.entries.remove(0);
         }
     }
 
     /// Everything newer than `since`, with the sequence to pass next time.
     pub fn since(&self, since: u64) -> (u64, Vec<String>) {
-        let seq = self.seq.lock().map(|s| *s).unwrap_or(0);
-        let log = self.log.lock().ok();
+        let Ok(log) = self.log.lock() else {
+            return (0, Vec::new());
+        };
         let events = log
-            .map(|log| {
-                log.iter()
-                    .filter(|(id, _)| *id > since)
-                    .map(|(_, event)| event.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-        (seq, events)
+            .entries
+            .iter()
+            .filter(|(id, _)| *id > since)
+            .map(|(_, event)| event.clone())
+            .collect();
+        (log.seq, events)
     }
 }
 
@@ -250,9 +314,27 @@ impl Queue {
     /// Enqueue and block until the host answers, for the socket path.
     fn ask(&self, command: Command) -> Result<String, String> {
         let (reply, rx) = std::sync::mpsc::sync_channel(1);
-        self.jobs.lock().unwrap().push(Job { command, reply });
-        rx.recv_timeout(REPLY_TIMEOUT)
-            .map_err(|_| "the host did not answer in time".to_string())
+        let state = Arc::new(AtomicU8::new(JOB_QUEUED));
+        self.jobs.lock().unwrap().push(Job {
+            command,
+            reply,
+            state: state.clone(),
+        });
+        match rx.recv_timeout(REPLY_TIMEOUT) {
+            Ok(reply) => Ok(reply),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let _ = state.compare_exchange(
+                    JOB_QUEUED,
+                    JOB_CANCELLED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+                Err("the host did not answer in time".to_string())
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("the host response channel closed".to_string())
+            }
+        }
     }
 
     pub fn drain(&self) -> Vec<Job> {
@@ -322,7 +404,9 @@ fn handle(stream: TcpStream, queue: &Queue) {
             // answered from the shared slot, never queued: a poll must not wait
             // for whatever the device loop is doing
             Ok(Command::Activation) => activation_json(&queue.activation),
-            Ok(command) => queue.ask(command).unwrap_or_else(|err| format!("err: {err}")),
+            Ok(command) => queue
+                .ask(command)
+                .unwrap_or_else(|err| format!("err: {err}")),
             Err(err) => format!("err: {err}"),
         },
         Err(_) => return,
@@ -464,6 +548,21 @@ mod tests {
         assert_eq!(parse("selection on"), Ok(Command::Selection(true)));
         assert_eq!(parse("selection false"), Ok(Command::Selection(false)));
         assert_eq!(parse("activation"), Ok(Command::Activation));
+        assert_eq!(
+            parse("window 7f3a 4242"),
+            Ok(Command::Window {
+                id: "7f3a".to_string(),
+                hwnd: 4242,
+            })
+        );
+        assert_eq!(parse("window 7f3a 0x1092"), parse("window 7f3a 4242"));
+        assert_eq!(
+            parse("pin 7f3a 2"),
+            Ok(Command::Pin {
+                id: "7f3a".to_string(),
+                index: 2,
+            })
+        );
     }
 
     #[test]
@@ -479,6 +578,9 @@ mod tests {
         assert!(parse("session").is_err());
         assert!(parse("session 7f3a").is_err());
         assert!(parse("session 7f3a sleeping").is_err());
+        assert!(parse("window 7f3a 0").is_err());
+        assert!(parse("window 7f3a -1").is_err());
+        assert!(parse("pin 7f3a nope").is_err());
         assert!(parse("session a/b working").is_err(), "one bare token only");
         assert!(
             parse(&format!("session {} working", "x".repeat(65))).is_err(),
@@ -551,7 +653,10 @@ mod tests {
         // a poller that already saw both gets an empty list but the right seq
         assert_eq!(events_json(&events, 2), "{\"seq\":2,\"events\":[]}");
         // and one that missed the first still gets the second
-        assert_eq!(events_json(&events, 1), "{\"seq\":2,\"events\":[\"reject\"]}");
+        assert_eq!(
+            events_json(&events, 1),
+            "{\"seq\":2,\"events\":[\"reject\"]}"
+        );
     }
 
     #[test]
@@ -568,6 +673,51 @@ mod tests {
             "a poller minutes behind does not grow the host without bound"
         );
         assert_eq!(list.first().map(String::as_str), Some("e5"));
+    }
+
+    #[test]
+    fn event_sequence_and_payload_are_read_from_the_same_snapshot() {
+        let events = Events::default();
+        let writer = events.clone();
+        let producer = std::thread::spawn(move || {
+            for i in 0..1000 {
+                writer.push(&format!("e{i}"));
+            }
+        });
+        let mut since = 0;
+        while !producer.is_finished() {
+            let (seq, batch) = events.since(since);
+            assert!(seq >= since);
+            if seq - since <= EVENT_BACKLOG as u64 {
+                assert_eq!(batch.len() as u64, seq - since);
+            }
+            since = seq;
+        }
+        producer.join().unwrap();
+        let (seq, batch) = events.since(since);
+        assert_eq!(batch.len() as u64, seq - since);
+    }
+
+    #[test]
+    fn expired_jobs_do_not_run_after_their_caller_gave_up() {
+        let (reply, _rx) = mpsc::sync_channel(1);
+        let state = Arc::new(AtomicU8::new(JOB_CANCELLED));
+        let job = Job {
+            command: Command::Ping,
+            reply,
+            state,
+        };
+        let mut applied = false;
+        assert!(job
+            .run(|_| {
+                applied = true;
+                "ok".to_string()
+            })
+            .starts_with("err:"));
+        assert!(
+            !applied,
+            "an expired queued command has no late side effect"
+        );
     }
 
     #[test]

@@ -24,13 +24,36 @@ const STATUS: Record<string, string> = {
   session_shutdown: "end",
 };
 
-function report(session: string, status: string) {
-  const socket = net.connect({
-    host: "127.0.0.1",
-    port: Number(process.env.CODEX_MICRO_PORT ?? 27700),
+function send(line: string): Promise<string> {
+  return new Promise((resolve) => {
+    const socket = net.connect({
+      host: "127.0.0.1",
+      port: Number(process.env.CODEX_MICRO_PORT ?? 27700),
+    });
+    let reply = "";
+    const finish = () => {
+      socket.destroy();
+      resolve(reply.trim());
+    };
+    socket.setTimeout(300, finish);
+    socket.on("error", finish);
+    socket.on("connect", () => socket.write(`${line}\n`));
+    socket.on("data", (chunk) => {
+      reply += chunk;
+      if (reply.includes("\n")) finish();
+    });
+    socket.on("end", finish);
   });
-  socket.on("error", () => {});
-  socket.on("connect", () => socket.end(`session ${session} ${status}\n`));
+}
+
+async function report(session: string, status: string) {
+  const rawAgent = process.env.CODEX_MICRO_AGENT;
+  const agent = rawAgent == null || rawAgent === "" ? null : Number(rawAgent);
+  if (agent != null && Number.isInteger(agent) && agent >= 0 && agent <= 5) {
+    const reply = await send(`pin ${session} ${agent}`);
+    if (!reply.startsWith("ok")) return;
+  }
+  await send(`session ${session} ${status}`);
 }
 
 interface SessionContext {
@@ -48,7 +71,7 @@ export default function (pi: ExtensionAPI) {
   for (const [event, status] of Object.entries(STATUS)) {
     on(event, (_event, ctx) => {
       const session = ctx?.sessionManager?.getSessionId?.();
-      if (session) report(session, status);
+      if (session) void report(session, status);
     });
   }
 }

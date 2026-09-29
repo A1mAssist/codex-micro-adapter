@@ -113,7 +113,7 @@ const GESTURE_LABELS = { right: "Turn right", left: "Turn left" };
 const STICK_DIRECTIONS = ["up", "right", "down", "left"];
 const STICK_LABELS = { up: "Up", right: "Right", down: "Down", left: "Left" };
 
-const app = { config: null, snapshot: null, live: false, configPath: "", version: "" };
+const app = { config: null, snapshot: null, live: false, autostart: false, configPath: "", version: "" };
 let editing = { slotId: null, keycapId: null, action: null, text: "" };
 
 const $ = (id) => document.getElementById(id);
@@ -147,6 +147,7 @@ async function refresh({ structure = false } = {}) {
     app.config = status.config;
     app.snapshot = status.snapshot;
     app.live = status.live;
+    app.autostart = await invoke("autostart_status");
     app.configPath = status.configPath;
     app.version = status.version;
     if (structure || !document.querySelector(".cell.keycap")) renderStructure();
@@ -224,6 +225,7 @@ function renderDynamic() {
   $("separate-mic").checked = Boolean(config.layout?.separateMicrophoneKeys);
   $("harness").value = config.harness || "generic";
   $("live-toggle").checked = app.live;
+  $("autostart-toggle").checked = app.autostart;
   $("control-port").textContent = `127.0.0.1:${config.controlPort ?? 27700}`;
   $("config-path").textContent = app.configPath || "";
   $("knob-note").textContent = knobNote();
@@ -589,6 +591,17 @@ $("separate-mic").addEventListener("change", (event) => {
   saveConfig();
 });
 
+$("autostart-toggle").addEventListener("change", async (event) => {
+  try {
+    await invoke("set_autostart", { enabled: event.target.checked });
+    app.autostart = event.target.checked;
+    toast(event.target.checked ? "Will start with Windows" : "Windows startup disabled");
+  } catch (err) {
+    event.target.checked = app.autostart;
+    toast("Could not change startup: " + err);
+  }
+});
+
 $("harness").addEventListener("change", (event) => {
   app.config.harness = event.target.value;
   renderHarnessHint();
@@ -742,5 +755,11 @@ function toast(message) {
   }, 2600);
 }
 
+if (window.__TAURI__?.event) {
+  window.__TAURI__.event.listen("codex-micro://snapshot", (event) => {
+    app.snapshot = event.payload;
+    renderDynamic();
+  });
+}
 refresh({ structure: true });
-setInterval(() => refresh(), 500);
+setInterval(() => refresh(), 2000);

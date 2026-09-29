@@ -54,47 +54,71 @@ export function apply(ctx, config) {
   // the env var wins so a test (or a second host) can point somewhere else
   const port = Number(process.env.CODEX_MICRO_PORT ?? config?.port ?? 27700);
 
-  const report = (thing, status) => {
+  const send = (line) => new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    let reply = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reply.trim());
+    };
+    socket.setTimeout(300, finish);
+    socket.on("error", finish);
+    socket.on("connect", () => socket.write(`${line}\n`));
+    socket.on("data", (chunk) => {
+      reply += chunk;
+      if (reply.includes("\n")) finish();
+    });
+    socket.on("end", finish);
+  });
+
+  const report = async (thing, status) => {
     const session = sessionOf(thing);
     if (!session || isSubagent(thing)) return;
-    const socket = net.connect({ host, port });
-    socket.on("error", () => {});
-    socket.on("connect", () => socket.end(`session ${session} ${status}\n`));
+    const rawAgent = process.env.CODEX_MICRO_AGENT;
+    const agent = rawAgent == null || rawAgent === "" ? null : Number(rawAgent);
+    if (agent != null && Number.isInteger(agent) && agent >= 0 && agent <= 5) {
+      const reply = await send(`pin ${session} ${agent}`);
+      if (!reply.startsWith("ok")) return;
+    }
+    await send(`session ${session} ${status}`);
   };
 
   /** Waterfall seams have to hand the request on, or the harness stalls. */
   const pass = (next) => (typeof next === "function" ? next() : undefined);
 
   ctx.on("agent/created", (payload) => {
-    report(agentOf(payload), "idle");
+    void report(agentOf(payload), "idle");
   });
 
   ctx.on("agent/pre-step", ({ agent, messages }, next) => {
-    if (messages?.length) report(agent, "working");
+    if (messages?.length) void report(agent, "working");
     return pass(next);
   });
 
   ctx.on("tools/pre-execute", (exec, next) => {
-    report(agentOf(exec), "working");
+    void report(agentOf(exec), "working");
     return pass(next);
   });
 
   // We only watch approvals: `next()` keeps the real answerer in charge, so a
   // missing answerer behaves exactly as it did before this plugin was mounted.
   ctx.on("approval/request", (request, next) => {
-    report(agentOf(request), "awaiting-approval");
+    void report(agentOf(request), "awaiting-approval");
     return pass(next);
   });
 
   ctx.on("agent/turn-stopping", (payload) => {
-    report(agentOf(payload), "unread");
+    void report(agentOf(payload), "unread");
   });
 
   // The session owns the agent key, so this is the only "the key is free now"
   // signal: compaction rebuilds the agent under the same session and must not
   // drop a key that is still in use.
   ctx.on("session/disposed", (session) => {
-    report(session, "end");
+    void report(session, "end");
   });
 
   ctx.logger?.info?.(`codex-micro: reporting agent keys to ${host}:${port}`);

@@ -554,7 +554,7 @@ fn version_of(value: &serde_json::Value) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::framing::{encode, CHANNEL_RPC, REPORT_LEN};
     use std::collections::VecDeque;
@@ -664,8 +664,6 @@ mod tests {
         }
     }
 
-
-
     fn failing_rig() -> Device<MockOpener> {
         let opener = MockOpener {
             incoming: Arc::new(Mutex::new(VecDeque::new())),
@@ -723,7 +721,10 @@ mod tests {
         r.closed.store(true, Ordering::SeqCst);
         let events = r.device.poll(Duration::ZERO);
         assert_eq!(events[0], Event::Disconnected);
-        assert!(!r.device.is_connected(), "and it reconnects on the next scan");
+        assert!(
+            !r.device.is_connected(),
+            "and it reconnects on the next scan"
+        );
         assert_eq!(r.device.state().status, Status::Error);
     }
 
@@ -764,7 +765,9 @@ mod tests {
             format!("{{\"result\":{{\"version\":\"1\"}},\"id\":{id}}}\n").as_bytes(),
         );
         r.incoming.lock().unwrap().extend(reply);
-        let events = r.device.connect(t0 + Duration::from_millis(1_100), Some(candidate()));
+        let events = r
+            .device
+            .connect(t0 + Duration::from_millis(1_100), Some(candidate()));
         assert!(
             events.contains(&Event::Connected),
             "the retry after a failed handshake must be able to connect"

@@ -181,7 +181,7 @@ npx @deepseek-ai/dsh plugin --profile web add <REPO>/plugins/deepseek/plugin
 
 ### 其它 harness
 
-任何语言、任何 agent：往控制端口写 `session <id> <status>` 就是全部协议，
+任何语言、任何 agent：往控制端口写 `session <id> <status>` 即可上报状态，
 `session <id> end` 会把键释放掉。命令清单见下面的
 [按键映射与控制 socket](#按键映射与控制-socket)。按 agent 键会聚焦该会话最后上报时
 所在的窗口；完全没有窗口的 harness 可以改绑 `agent.focus.<n>`。
@@ -231,6 +231,8 @@ hook、脚本或插件都能点亮 agent 键：
 codex-micro-backend send "agent 0 working"          # 键 1 变蓝
 codex-micro-backend send "agent 1 awaiting-approval" # 键 2 变橙
 codex-micro-backend send "session 7f3a working"      # 宿主挑一个空键并记住归属
+codex-micro-backend send "pin 7f3a 2"              # 为该会话固定第 3 个键
+codex-micro-backend send "window 7f3a 4242"        # 上报该会话的窗口句柄
 codex-micro-backend send "session 7f3a end"          # 把键还回去
 codex-micro-backend send "voice recording"           # 氛围灯圈变蓝
 codex-micro-backend send "brightness 40"
@@ -249,7 +251,10 @@ codex-micro-backend send "fleet error"               # 整圈，忽略单键状�
 `session <id> <status>` 是 harness 插件要用的那条：它上报自己已有的会话 id，宿主
 回一个它拿到的 agent 键（`ok session 7f3a agent 3 working`）。键按从低到高发放；六
 个都占满时，最"不着急"的那个会易主 —— 顺序是 `off`、idle、unread，然后是等待和
-工作状态，同状态里最旧的先换。手动的 `agent <n> …` 会把键从原来的会话手里拿回来。
+工作状态，同状态里最旧的先换。`pin <id> <0-5>` 可固定一个键，直到
+`session <id> end` 才释放；其他会话不能占用。`window <id> <hwnd>` 可覆盖活跃
+会话记住的前台窗口。手动的 `agent <n> …` 会把键从原来的会话手里拿回来，但不会
+取消固定关系。
 
 状态词：`off`、`idle`、`working`、`unread`、`awaiting-approval`、
 `awaiting-response`、`error`。

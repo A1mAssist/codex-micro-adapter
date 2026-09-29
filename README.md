@@ -198,8 +198,8 @@ endpoint; if you moved the host, edit the `HOST` constant in
 
 ### Anything else
 
-Any language, any agent: writing `session <id> <status>` to the control port is
-the whole protocol, and `session <id> end` releases the key. See
+Any language, any agent: writing `session <id> <status>` to the control port
+reports its state, and `session <id> end` releases the key. See
 [Bindings and the control socket](#bindings-and-the-control-socket) below for
 the command list. Agent-key taps then focus the window that session last
 reported from, and a harness with no window at all can map `agent.focus.<n>`
@@ -257,6 +257,8 @@ light the agent keys:
 codex-micro-backend send "agent 0 working"          # key 1 turns blue
 codex-micro-backend send "agent 1 awaiting-approval" # key 2 turns orange
 codex-micro-backend send "session 7f3a working"      # host picks a free key, remembers the owner
+codex-micro-backend send "pin 7f3a 2"              # reserves key 3 for this session
+codex-micro-backend send "window 7f3a 4242"        # reports its window handle
 codex-micro-backend send "session 7f3a end"          # gives the key back
 codex-micro-backend send "voice recording"           # ambient ring goes blue
 codex-micro-backend send "brightness 40"
@@ -278,8 +280,11 @@ right now, and `window --focus <hwnd>` exercises the focus call itself.
 it already has and the host answers with the agent key it took
 (`ok session 7f3a agent 3 working`). Keys are handed out lowest-first; when all
 six are taken, the dullest one changes hands — `off`, then idle, then unread,
-then the waiting/working states, oldest first inside each. A manual
-`agent <n> …` takes its key back from whichever session owned it.
+then the waiting/working states, oldest first inside each. `pin <id> <0-5>`
+reserves one key until `session <id> end`; other sessions cannot take it.
+`window <id> <hwnd>` replaces the remembered foreground window for an active
+session. A manual `agent <n> …` takes its key back from whichever session owned
+it; a pin remains reserved.
 
 States: `off`, `idle`, `working`, `unread`, `awaiting-approval`,
 `awaiting-response`, `error`.
