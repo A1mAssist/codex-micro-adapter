@@ -2,6 +2,9 @@
 
 English | [中文](README.zh-CN.md)
 
+[![CI](https://github.com/A1mAssist/codex-micro-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/A1mAssist/codex-micro-adapter/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/A1mAssist/codex-micro-adapter)](https://github.com/A1mAssist/codex-micro-adapter/releases/latest)
+
 Use the Work Louder **Codex Micro** keyboard with any coding agent - Claude Code,
 the Codex CLI, pi, opencode, DeepSeek Harness, or anything else that runs in a
 window.
@@ -11,6 +14,10 @@ This project is a standalone host that speaks the same device protocol and
 carries over the same behaviour: the six agent keys, the keycaps, the analog
 stick, the knob, the microphone key, the lighting derivation behind them, and
 the settings page that configures all of it.
+
+Current release: **v0.1.0** for Windows 11 x64. The host is dry-run by default,
+so installing it cannot inject keystrokes until you explicitly enable
+**Send keystrokes** in the desktop app or pass `--live` to the console host.
 
 ```
 desktop/               Tauri app: settings surface + embedded host
@@ -51,14 +58,30 @@ the control socket and the binding table — see [Deliberate differences](#delib
 
 ## Install
 
-Windows 11 x64. Grab the installer from
-[Releases](https://github.com/A1mAssist/codex-micro-adapter/releases) - the
-`setup.exe` (NSIS) for a normal install, or the `.msi` if you deploy by policy.
-Both bundle the host and the settings window, so there is nothing else to
-install except Node.js, which the Claude Code and Codex CLI hooks use.
+### Requirements
+
+- Windows 11 x64.
+- WebView2, normally already included with Windows 11.
+- Node.js 20 or newer only when using the Claude Code or Codex CLI hooks.
+- A Work Louder Codex Micro, Creator Micro V2, or a compatible device exposed
+  through the documented HID interface.
+
+### First run
+
+1. Download the latest `*-setup.exe` from
+   [GitHub Releases](https://github.com/A1mAssist/codex-micro-adapter/releases/latest).
+   Use the `.msi` for managed deployment.
+2. Start **Codex Micro Adapter**. It stays in the tray when the window is
+   closed; use the tray icon to show it again or exit it completely.
+3. Open the settings window and confirm the device appears under **Connection**.
+4. Keep **Send keystrokes** off while checking your layout and harness events.
+   Turn it on only after the dry-run log looks correct.
 
 Then add the adapter for whichever agent you use - see
 [Harness setup](#harness-setup).
+
+The host listens on `127.0.0.1:27700`. Set `CODEX_MICRO_PORT` before starting a
+plugin if another local service already uses that port.
 
 ## Build and run
 
@@ -73,11 +96,25 @@ cargo run -p codex-micro-desktop
 
 ### Release process
 
-Push a tag such as `v0.2.0`. GitHub Actions runs the backend, desktop and
+Push a tag matching the application version, such as `v0.1.0`. GitHub Actions runs the backend, desktop and
 adapter checks, then the release workflow builds and attaches the Windows MSI
 and NSIS installers to the GitHub Release. Installer signing and automatic
 updates require repository secrets for a Windows certificate and Tauri updater
 key; the unsigned packages remain suitable for internal and test distribution.
+
+### Troubleshooting
+
+- **Device not detected:** close another app that owns the keyboard, reconnect
+  the USB cable, then restart the adapter. The settings page shows the current
+  connection and firmware state.
+- **Agent key stays dark:** keep the adapter running, confirm the harness hook
+  is trusted, and check that the plugin points at `127.0.0.1:27700`.
+- **No key is injected:** this is expected while dry-run is enabled. Turn on
+  **Send keystrokes** or use the console's `--live` flag.
+- **A session uses the wrong key:** set `CODEX_MICRO_AGENT=0..5` before the
+  plugin starts, or send `pin <session-id> <0-5>` to the control port.
+- **A tap focuses the wrong window:** send `window <session-id> <hwnd>` from the
+  harness when its foreground window changes.
 
 Console host (no window, useful for debugging):
 

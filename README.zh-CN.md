@@ -2,12 +2,19 @@
 
 [English](README.md) | 中文
 
+[![CI](https://github.com/A1mAssist/codex-micro-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/A1mAssist/codex-micro-adapter/actions/workflows/ci.yml)
+[![最新 Release](https://img.shields.io/github/v/release/A1mAssist/codex-micro-adapter)](https://github.com/A1mAssist/codex-micro-adapter/releases/latest)
+
 用 Work Louder 的 **Codex Micro** 键盘配合任意编码 agent —— Claude Code、Codex
 CLI、pi、opencode、DeepSeek Harness，或者任何跑在窗口里的东西。
 
 ChatGPT/Codex 桌面端是用一套私有前端驱动这把键盘的。这个项目是一个独立的宿主，
 说的是同一套设备协议，也复刻了同样的行为：六个 agent 键、键帽、摇杆、旋钮、麦克
 风键，它们背后的灯光推导，以及配置这些的设置页。
+
+当前版本是 Windows 11 x64 的 **v0.1.0**。宿主默认处于 dry run，安装后不会自动向
+其他窗口注入按键；只有在桌面应用中打开 **Send keystrokes**，或给控制台宿主加上
+`--live`，才会真正发送按键。
 
 ```
 desktop/               Tauri 应用：设置界面 + 内嵌宿主
@@ -41,11 +48,27 @@ ChatGPT 专属的那部分逻辑（会话列表、"单击聚焦 Codex"、macOS �
 
 ## 安装
 
-Windows 11 x64。到 [Releases](https://github.com/A1mAssist/codex-micro-adapter/releases)
-下载安装包，普通安装用 `setup.exe`（NSIS），按策略部署用 `.msi`。宿主和设置窗口
-都打包在里面了，只需要再装 Node.js，Claude Code 和 Codex CLI 的 hook 要用它。
+### 环境要求
+
+- Windows 11 x64。
+- WebView2，Windows 11 通常已经自带。
+- 只有使用 Claude Code 或 Codex CLI hook 时才需要 Node.js 20 或更新版本。
+- Work Louder Codex Micro、Creator Micro V2，或通过文档 HID 接口暴露的兼容设备。
+
+### 第一次启动
+
+1. 到 [GitHub Releases](https://github.com/A1mAssist/codex-micro-adapter/releases/latest)
+   下载最新的 `*-setup.exe`；集中部署使用 `.msi`。
+2. 启动 **Codex Micro Adapter**。关闭窗口后应用会留在托盘，需要时点托盘图标恢复，
+   或从托盘菜单完全退出。
+3. 打开设置页，在 **Connection** 中确认键盘已经出现。
+4. 检查布局和 harness 事件时保持 **Send keystrokes** 关闭；确认 dry-run 日志正确后
+   再打开它。
 
 装完之后再按你用的 agent 装上适配器，见[各 harness 的安装](#各-harness-的安装)。
+
+宿主监听 `127.0.0.1:27700`。如果这个端口已经被其他本地服务占用，在启动插件前
+设置 `CODEX_MICRO_PORT`。
 
 ## 构建与运行
 
@@ -59,9 +82,21 @@ cargo run -p codex-micro-desktop
 
 ### 发布流程
 
-推送形如 `v0.2.0` 的标签后，GitHub Actions 会运行后端、桌面端和适配器检查，
+推送与应用版本一致的标签（例如 `v0.1.0`）后，GitHub Actions 会运行后端、桌面端和适配器检查，
 然后构建 Windows MSI 与 NSIS 安装包并附加到 GitHub Release。安装包签名和自动更新
 需要仓库配置 Windows 证书与 Tauri updater 密钥；未签名安装包可用于内部和测试分发。
+
+### 故障排查
+
+- **找不到设备：** 关闭其他占用键盘的程序，重新插拔 USB，再重启宿主；设置页会显示
+  当前连接和固件状态。
+- **Agent 键不亮：** 确认宿主正在运行、harness hook 已信任，并检查插件是否连接到
+  `127.0.0.1:27700`。
+- **没有注入按键：** dry run 下这是正常现象；打开 **Send keystrokes**，或给控制台宿主
+  加 `--live`。
+- **会话拿错键：** 在插件启动前设置 `CODEX_MICRO_AGENT=0..5`，或向控制端口发送
+  `pin <session-id> <0-5>`。
+- **按键聚焦了错误窗口：** 窗口变化时让 harness 发送 `window <session-id> <hwnd>`。
 
 控制台宿主（没有窗口，调起来方便）：
 

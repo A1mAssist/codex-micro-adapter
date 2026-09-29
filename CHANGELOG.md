@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - 2026-09-29
+## 0.1.0 - 2026-09-30
 
 Product release for Windows 11 x64:
 
@@ -9,11 +9,6 @@ Product release for Windows 11 x64:
 - Separate hold delay and repeat rate for reliable push-to-talk bindings.
 - Session pinning and explicit session window reporting over the control socket.
 - CI checks and tagged GitHub Release builds for MSI and NSIS installers.
-
-## 0.1.0 - 2026-09-24
-
-First release: a standalone host for the Work Louder Codex Micro keyboard, with
-one adapter for each of five coding agents.
 
 ### The host
 
