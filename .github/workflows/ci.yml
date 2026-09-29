@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-and-adapters:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+          components: rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check formatting
+        run: rustfmt --edition 2021 --check backend/src/control.rs backend/src/device.rs backend/src/host.rs desktop/src-tauri/src/main.rs desktop/src-tauri/src/vendor.rs
+      - name: Run backend tests
+        run: cargo test -p codex-micro-backend
+      - name: Check desktop crate
+        run: cargo check -p codex-micro-desktop
+      - name: Check JavaScript
+        shell: pwsh
+        run: |
+          node --check desktop/ui/app.js
+          node --check scripts/check-harness-adapters.mjs
+      - name: Run adapter protocol checks
+        run: node scripts/check-harness-adapters.mjs
+

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 - 2026-09-29
+
+Product release for Windows 11 x64:
+
+- Desktop tray mode, hide-on-close, and optional Windows startup.
+- Snapshot events with a polling fallback for responsive settings updates.
+- Separate hold delay and repeat rate for reliable push-to-talk bindings.
+- Session pinning and explicit session window reporting over the control socket.
+- CI checks and tagged GitHub Release builds for MSI and NSIS installers.
+
 ## 0.1.0 - 2026-09-24
 
 First release: a standalone host for the Work Louder Codex Micro keyboard, with

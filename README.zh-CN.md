@@ -57,6 +57,12 @@ Windows 11、Rust stable。Tauri 应用需要 MSVC 工具链；仓库里带了�
 cargo run -p codex-micro-desktop
 ```
 
+### 发布流程
+
+推送形如 `v0.2.0` 的标签后，GitHub Actions 会运行后端、桌面端和适配器检查，
+然后构建 Windows MSI 与 NSIS 安装包并附加到 GitHub Release。安装包签名和自动更新
+需要仓库配置 Windows 证书与 Tauri updater 密钥；未签名安装包可用于内部和测试分发。
+
 控制台宿主（没有窗口，调起来方便）：
 
 ```powershell

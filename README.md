@@ -71,6 +71,14 @@ Studio install has no desktop CRT:
 cargo run -p codex-micro-desktop
 ```
 
+### Release process
+
+Push a tag such as `v0.2.0`. GitHub Actions runs the backend, desktop and
+adapter checks, then the release workflow builds and attaches the Windows MSI
+and NSIS installers to the GitHub Release. Installer signing and automatic
+updates require repository secrets for a Windows certificate and Tauri updater
+key; the unsigned packages remain suitable for internal and test distribution.
+
 Console host (no window, useful for debugging):
 
 ```powershell

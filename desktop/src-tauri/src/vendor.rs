@@ -12,7 +12,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The renderer entry point inside the extracted bundle.
 const INDEX: &str = "index.html";
@@ -25,7 +25,10 @@ pub fn root() -> Option<PathBuf> {
         // installed: next to the executable
         std::env::current_exe()
             .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("vendor-webview").join("webview")))
+            .and_then(|exe| {
+                exe.parent()
+                    .map(|dir| dir.join("vendor-webview").join("webview"))
+            })
             .unwrap_or_default(),
     ];
     candidates.into_iter().find(|dir| dir.join(INDEX).is_file())
@@ -58,8 +61,13 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     }
 
     let target = request.split_whitespace().nth(1).unwrap_or("/");
-    let path = target.split(['?', '#']).next().unwrap_or("/").trim_start_matches('/');
-    let mut file = root.join(percent_decode(path));
+    let path = target
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("/")
+        .trim_start_matches('/');
+    let decoded = percent_decode(path);
+    let mut file = safe_join(root, &decoded).unwrap_or_else(|| root.join("__missing__"));
     let is_index = path.is_empty() || path == INDEX;
     if !file.is_file() {
         // The app is a single page app, but its index.html uses relative asset
@@ -93,7 +101,10 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
         }
         Err(_) => {
             let body = b"not found";
-            let head = format!("HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            let head = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
             stream.write_all(head.as_bytes())?;
             stream.write_all(body)?;
         }
@@ -118,6 +129,20 @@ fn percent_decode(path: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Keep the loopback bundle server inside its extracted root, including when a
+/// URL uses an encoded separator or parent segment.
+fn safe_join(root: &Path, path: &str) -> Option<PathBuf> {
+    let mut file = root.to_path_buf();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => file.push(part),
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => return None,
+        }
+    }
+    Some(file)
 }
 
 fn mime_for(path: &Path) -> &'static str {
@@ -157,9 +182,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_paths_that_escape_the_bundle_root() {
+        let root = Path::new("C:/bundle");
+        assert!(safe_join(root, "assets/app.js").is_some());
+        assert!(safe_join(root, "../secrets.txt").is_none());
+        assert!(safe_join(root, "..\\secrets.txt").is_none());
+    }
+
+    #[test]
     fn maps_mime_types() {
-        assert_eq!(mime_for(Path::new("x/index.html")), "text/html; charset=utf-8");
-        assert_eq!(mime_for(Path::new("x/app.js")), "text/javascript; charset=utf-8");
+        assert_eq!(
+            mime_for(Path::new("x/index.html")),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            mime_for(Path::new("x/app.js")),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(mime_for(Path::new("x/a.wasm")), "application/wasm");
     }
 
@@ -167,14 +206,23 @@ mod tests {
     fn fills_in_the_build_placeholders() {
         let dir = std::env::temp_dir().join("codex-micro-vendor-base-test");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join(INDEX), "<html><!-- PROD_BASE_TAG_HERE --><body></body></html>").unwrap();
+        std::fs::write(
+            dir.join(INDEX),
+            "<html><!-- PROD_BASE_TAG_HERE --><body></body></html>",
+        )
+        .unwrap();
         let port = serve(dir.clone()).unwrap();
 
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        stream.write_all(b"GET /settings/codex-micro HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        stream
+            .write_all(b"GET /settings/codex-micro HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
         let mut body = String::new();
         std::io::Read::read_to_string(&mut stream, &mut body).unwrap();
-        assert!(body.contains("<base href=\"/\" />"), "base tag replaced: {body}");
+        assert!(
+            body.contains("<base href=\"/\" />"),
+            "base tag replaced: {body}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -186,7 +234,9 @@ mod tests {
         let port = serve(dir.clone()).unwrap();
 
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        stream.write_all(b"GET /settings/codex-micro HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        stream
+            .write_all(b"GET /settings/codex-micro HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
         let mut response = String::new();
         BufReader::new(stream).read_line(&mut response).unwrap();
         assert!(response.contains("200 OK"));
