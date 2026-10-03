@@ -119,6 +119,7 @@ main {
 .row:first-child { border-top: none; }
 .row-label { font-size: 15px; font-weight: 500; }
 .row-value { font-size: 15px; color: var(--text); text-align: right; }
+.error-detail { color: var(--danger); overflow-wrap: anywhere; }
 .row-note {
   color: var(--text-secondary);
   font-size: 13.5px;
@@ -128,6 +129,7 @@ main {
 }
 .row-body { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .row-body-inline { min-width: 300px; justify-content: flex-end; }
+.connection-actions { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 
 .value-inline { display: inline-flex; align-items: center; gap: 9px; justify-content: flex-end; }
 

@@ -14,6 +14,7 @@ use crate::control::DEFAULT_PORT;
 use crate::device::LightingModel;
 use crate::layout::Layout;
 use serde::{Deserialize, Serialize};
+use std::io::{self, Write};
 use std::path::Path;
 use std::time::Duration;
 
@@ -64,20 +65,59 @@ impl Config {
         base.join("codex-micro").join("config.json")
     }
 
-    /// Read the file, falling back to defaults when it is absent or unreadable.
-    pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+    /// A missing file uses defaults; a damaged file remains available for repair.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let config: Self = serde_json::from_str(&text)
+                    .map_err(|err| format!("could not parse {}: {err}", path.display()))?;
+                config
+                    .validate()
+                    .map_err(|err| format!("invalid {}: {err}", path.display()))?;
+                Ok(config)
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(err) => Err(format!("could not read {}: {err}", path.display())),
+        }
     }
 
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
+        for (key, binding) in &self.bindings.map {
+            if crate::actions::parse_binding(binding).is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("invalid binding for {key}: {binding}"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        self.validate()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let text = serde_json::to_string_pretty(self).unwrap_or_default();
-        std::fs::write(path, text)
+        let text = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos();
+        let temporary = path.with_extension(format!("{}.{}.tmp", std::process::id(), stamp));
+        let result = (|| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
+            file.write_all(&text)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        result
     }
 }
 
@@ -149,5 +189,35 @@ mod tests {
         let config: Config = serde_json::from_str("{\"brightnessPercent\":50}").unwrap();
         assert_eq!(config.brightness_percent, 50);
         assert_eq!(config.auto_off.as_deref(), Some("3-minutes"));
+    }
+
+    #[test]
+    fn save_preserves_last_good_config_on_invalid_binding_and_reports_corruption() {
+        let path = std::env::temp_dir().join(format!(
+            "codex-micro-config-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut config = Config::default();
+        config.save(&path).unwrap();
+        config.brightness_percent = 40;
+        config.save(&path).unwrap();
+        config.bindings.set("ACT06", "hold:nosuchkey");
+        assert_eq!(
+            config.save(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(Config::load(&path).unwrap().brightness_percent, 40);
+
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(Config::load(&path).unwrap_err().contains("invalid binding"));
+
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(Config::load(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
+        std::fs::remove_file(path).unwrap();
     }
 }

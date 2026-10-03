@@ -113,8 +113,11 @@ const GESTURE_LABELS = { right: "Turn right", left: "Turn left" };
 const STICK_DIRECTIONS = ["up", "right", "down", "left"];
 const STICK_LABELS = { up: "Up", right: "Right", down: "Down", left: "Left" };
 
-const app = { config: null, snapshot: null, live: false, autostart: false, configPath: "", version: "" };
+const app = { config: null, configError: null, snapshot: null, live: false, autostart: false, configPath: "", version: "" };
 let editing = { slotId: null, keycapId: null, action: null, text: "" };
+let saveQueue = Promise.resolve();
+let pendingSaves = 0;
+let saveRevision = 0;
 
 const $ = (id) => document.getElementById(id);
 const keycap = (id) => KEYCAPS.find((k) => k.id === id) || KEYCAPS[0];
@@ -142,9 +145,12 @@ function slotActionLabel(slot) {
 // ---------------------------------------------------------------- transport
 
 async function refresh({ structure = false } = {}) {
+  const startedDuringSave = pendingSaves > 0;
+  const revision = saveRevision;
   try {
     const status = await invoke("status");
-    app.config = status.config;
+    if (!startedDuringSave && pendingSaves === 0 && revision === saveRevision) app.config = status.config;
+    app.configError = status.configError;
     app.snapshot = status.snapshot;
     app.live = status.live;
     app.autostart = await invoke("autostart_status");
@@ -167,16 +173,26 @@ function renderStructure() {
   renderHarnessHint();
 }
 
-async function saveConfig() {
-  try {
-    const status = await invoke("save_config", { config: app.config });
-    app.config = status.config;
-    app.snapshot = status.snapshot;
-    renderChassis();
-    renderDynamic();
-  } catch (err) {
-    toast(`Could not save: ${err}`);
-  }
+function saveConfig() {
+  const config = structuredClone(app.config);
+  saveRevision += 1;
+  pendingSaves += 1;
+  const task = saveQueue.then(async () => {
+    try {
+      const status = await invoke("save_config", { config });
+      app.snapshot = status.snapshot;
+      app.configError = status.configError;
+      return true;
+    } catch (err) {
+      toast(`Could not save: ${err}`);
+      return false;
+    } finally {
+      pendingSaves -= 1;
+      if (pendingSaves === 0) await refresh({ structure: true });
+    }
+  });
+  saveQueue = task;
+  return task;
 }
 
 function fill(select, options) {
@@ -202,6 +218,8 @@ function renderDynamic() {
       "not-detected": "Not detected",
     }[snapshot.status] || "Not detected";
   $("connection").textContent = connection;
+  $("connection-error-row").hidden = snapshot.status !== "error" || !snapshot.error;
+  $("connection-error").textContent = snapshot.error || "";
   // the same state, in the title bar: a dark keyboard should be obvious at rest
   $("status-text").textContent = connection;
   $("status-dot").dataset.state =
@@ -228,6 +246,8 @@ function renderDynamic() {
   $("autostart-toggle").checked = app.autostart;
   $("control-port").textContent = `127.0.0.1:${config.controlPort ?? 27700}`;
   $("config-path").textContent = app.configPath || "";
+  $("config-error").hidden = !app.configError;
+  $("config-error").textContent = app.configError || "";
   $("knob-note").textContent = knobNote();
 
   // physical presses echo into the preview: the held slot lights up, plus the
@@ -440,7 +460,10 @@ function renderActionPicker() {
   // instead of a hand-picked subset.
   const commands = new Map();
   for (const cap of KEYCAPS) if (cap.command) commands.set(cap.command, cap.label);
-  for (const [command, label] of commands) options.push([`command:${command}`, label]);
+  for (const [command, label] of commands) {
+    options.push([`command:${command}`, app.config.bindings?.[command]
+      ? label : `${label} (needs key binding)`]);
+  }
   for (const [value, label] of options) {
     const option = document.createElement("option");
     option.value = value;
@@ -451,13 +474,28 @@ function renderActionPicker() {
   select.value = !current ? "" : current.type === "composer-text" ? "composer-text" : current.type === "command" ? `command:${current.value}` : "";
   $("keycap-text-row").hidden = select.value !== "composer-text";
   $("keycap-text").value = editing.text;
-  $("keycap-action-note").textContent = select.value ? "" : keycap(editing.keycapId).label || "";
+  updateActionNote();
 }
 
-function commitKeycapEditor() {
+function updateActionNote() {
+  const value = $("keycap-action").value;
+  const command = value.startsWith("command:") ? value.slice(8) : value ? null : keycap(editing.keycapId).command;
+  const mapped = $("keycap-binding").value.trim() || (command && app.config.bindings?.[command]);
+  $("keycap-action-note").textContent = command && !mapped
+    ? "Set a key below before saving; this command has no binding in the current harness."
+    : value ? "" : keycap(editing.keycapId).label || "";
+}
+
+async function commitKeycapEditor() {
   const layout = app.config.layout;
   const slotId = editing.slotId;
   const value = $("keycap-action").value;
+  const binding = $("keycap-binding").value.trim();
+  const command = value.startsWith("command:") ? value.slice(8) : value ? null : keycap(editing.keycapId).command;
+  if (command && !binding && !app.config.bindings?.[command]) {
+    toast("Set a key for this command before saving");
+    return false;
+  }
   const action =
     value === ""
       ? null
@@ -468,7 +506,6 @@ function commitKeycapEditor() {
   // The slot binding is what the host reads first, so it is what makes a key
   // work in whatever harness is focused. An empty box removes the binding.
   app.config.bindings = app.config.bindings || {};
-  const binding = $("keycap-binding").value.trim();
   if (binding) app.config.bindings[slotId] = binding;
   else delete app.config.bindings[slotId];
 
@@ -485,7 +522,7 @@ function commitKeycapEditor() {
       delete app.config.bindings?.[other];
     }
   }
-  saveConfig();
+  return saveConfig();
 }
 
 // --------------------------------------------------------- knob / stick maps
@@ -609,14 +646,23 @@ $("harness").addEventListener("change", (event) => {
 });
 
 $("live-toggle").addEventListener("change", async (event) => {
-  const status = await invoke("set_live", { live: event.target.checked });
-  app.live = status.live;
-  toast(status.live ? "Keystrokes will be sent to the focused window" : "Dry run: actions are logged only");
+  try {
+    const status = await invoke("set_live", { live: event.target.checked });
+    app.live = status.live;
+    toast(status.live ? "Keystrokes will be sent to the focused window" : "Dry run: actions are logged only");
+  } catch (err) {
+    event.target.checked = app.live;
+    toast(`Could not change mode: ${err}`);
+  }
 });
 
 $("rescan").addEventListener("click", async () => {
-  await refresh();
-  toast("Rescanning for the keyboard");
+  try {
+    await invoke("rescan");
+    toast("Device scan requested");
+  } catch (err) {
+    toast(`Could not rescan: ${err}`);
+  }
 });
 
 
@@ -626,17 +672,21 @@ $("about-copy").addEventListener("click", async () => {
 });
 
 $("copy-port").addEventListener("click", async () => {
-  await navigator.clipboard.writeText('codex-micro-backend send "agent 0 working"');
-  toast("Example command copied");
+  await navigator.clipboard.writeText($("control-port").textContent);
+  toast("Control socket address copied");
 });
 
 $("keycap-search").addEventListener("input", renderKeycapGrid);
 $("keycap-action").addEventListener("change", () => {
   $("keycap-text-row").hidden = $("keycap-action").value !== "composer-text";
-  $("keycap-action-note").textContent = $("keycap-action").value ? "" : keycap(editing.keycapId).label || "";
+  updateActionNote();
 });
-$("keycap-form").addEventListener("submit", (event) => {
-  if (event.submitter?.value === "save") commitKeycapEditor();
+$("keycap-binding").addEventListener("input", updateActionNote);
+$("keycap-form").addEventListener("submit", async (event) => {
+  if (event.submitter?.value === "save") {
+    event.preventDefault();
+    if (await commitKeycapEditor()) $("keycap-dialog").close("save");
+  }
 });
 
 $("reset-layout").addEventListener("click", () => {
@@ -707,6 +757,8 @@ function aboutRows() {
     ["Adapter version", app.version || "-"],
     ["Keyboard", connected ? transport : "Not detected"],
     ["Firmware", connected && snapshot.firmware ? snapshot.firmware : "-"],
+    ["Connection error", snapshot.error || "-"],
+    ["Config error", app.configError || "-"],
     ["Agent keys", config.harness === "off" ? "Off" : "Following " + (config.harness || "generic")],
     ["Control socket", "127.0.0.1:" + (config.controlPort ?? 27700)],
     ["Config file", app.configPath || "-"],

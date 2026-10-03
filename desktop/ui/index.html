@@ -20,7 +20,14 @@
       <section class="card">
         <div class="row">
           <div class="row-label">Connection</div>
-          <div class="row-value" id="connection">Not detected</div>
+          <div class="row-body connection-actions">
+            <div class="row-value" id="connection">Not detected</div>
+            <button class="ghost" id="rescan">Rescan device</button>
+          </div>
+        </div>
+        <div class="row" id="connection-error-row" hidden>
+          <div class="row-label">Connection error</div>
+          <div class="row-value error-detail" id="connection-error"></div>
         </div>
         <div class="row" id="battery-row" hidden>
           <div class="row-label">Battery</div>
@@ -147,9 +154,7 @@
             <div>
               <div class="row-label">Config</div>
               <div class="row-note" id="config-path"></div>
-            </div>
-            <div class="row-body">
-              <button class="ghost" id="rescan">Rescan device</button>
+              <div class="row-note error-detail" id="config-error" role="alert" hidden></div>
             </div>
           </div>
           <details>

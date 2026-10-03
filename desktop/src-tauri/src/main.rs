@@ -27,6 +27,7 @@ enum UiMessage {
     Apply(Command),
     Save(Config),
     Live(bool),
+    Rescan,
 }
 
 struct App {
@@ -35,8 +36,25 @@ struct App {
     vendor_port: Option<u16>,
     snapshot: Arc<Mutex<Snapshot>>,
     config: Mutex<Config>,
+    config_issue: Mutex<Option<ConfigIssue>>,
     config_path: PathBuf,
     live: Arc<Mutex<bool>>,
+}
+
+enum ConfigIssue {
+    Damaged(String),
+    BackedUp(PathBuf),
+}
+
+impl ConfigIssue {
+    fn message(&self) -> String {
+        match self {
+            Self::Damaged(error) => error.clone(),
+            Self::BackedUp(path) => {
+                format!("Previous damaged config preserved at {}", path.display())
+            }
+        }
+    }
 }
 
 /// Everything the window renders from.
@@ -45,6 +63,7 @@ struct App {
 struct Status {
     snapshot: Snapshot,
     config: Config,
+    config_error: Option<String>,
     live: bool,
     config_path: String,
     /// The build's own version, for the About sheet.
@@ -55,6 +74,12 @@ fn build_status(app: &App) -> Status {
     Status {
         snapshot: app.snapshot.lock().unwrap().clone(),
         config: app.config.lock().unwrap().clone(),
+        config_error: app
+            .config_issue
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(ConfigIssue::message),
         live: *app.live.lock().unwrap(),
         config_path: app.config_path.display().to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -81,10 +106,50 @@ fn apply(app: State<App>, command: String) -> String {
 
 #[tauri::command]
 fn save_config(app: State<App>, config: Config) -> Result<Status, String> {
-    config.save(&app.config_path).map_err(|e| e.to_string())?;
-    *app.config.lock().unwrap() = config.clone();
-    let _ = app.ui.lock().unwrap().send(UiMessage::Save(config));
+    let mut stored = app.config.lock().unwrap();
+    let mut issue = app.config_issue.lock().unwrap();
+    persist_config(&config, &app.config_path, &mut issue)?;
+    *stored = config.clone();
+    drop(issue);
+    drop(stored);
+    app.ui
+        .lock()
+        .unwrap()
+        .send(UiMessage::Save(config))
+        .map_err(|e| e.to_string())?;
     Ok(build_status(&app))
+}
+
+fn persist_config(
+    config: &Config,
+    path: &std::path::Path,
+    issue: &mut Option<ConfigIssue>,
+) -> Result<(), String> {
+    config.validate().map_err(|e| e.to_string())?;
+    let backup = if matches!(issue, Some(ConfigIssue::Damaged(_))) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let backup = path.with_extension(format!("invalid-{stamp}.json"));
+        std::fs::copy(path, &backup).map_err(|e| e.to_string())?;
+        Some(backup)
+    } else {
+        None
+    };
+    if let Some(path) = backup {
+        *issue = Some(ConfigIssue::BackedUp(path));
+    }
+    config.save(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rescan(app: State<App>) -> Result<(), String> {
+    app.ui
+        .lock()
+        .unwrap()
+        .send(UiMessage::Rescan)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -149,7 +214,10 @@ fn devices() -> Vec<serde_json::Value> {
 
 fn main() {
     let config_path = Config::default_path();
-    let config = Config::load(&config_path);
+    let (config, config_error) = match Config::load(&config_path) {
+        Ok(config) => (config, None),
+        Err(err) => (Config::default(), Some(ConfigIssue::Damaged(err))),
+    };
     let queue = Queue::default();
     let snapshot = Arc::new(Mutex::new(Snapshot::default()));
     let live = Arc::new(Mutex::new(false));
@@ -178,6 +246,7 @@ fn main() {
             vendor_port,
             snapshot: snapshot.clone(),
             config: Mutex::new(config.clone()),
+            config_issue: Mutex::new(config_error),
             config_path,
             live: live.clone(),
         })
@@ -185,6 +254,7 @@ fn main() {
             status,
             apply,
             save_config,
+            rescan,
             set_live,
             set_autostart,
             autostart_status,
@@ -335,10 +405,11 @@ fn host_loop(
                 UiMessage::Save(config) => {
                     agent_keys = config.harness != "off";
                     host.set_bindings(config.bindings.clone());
-                    host.device.set_layout(config.layout.clone());
+                    host.set_layout(config.layout.clone());
                     host.set_lighting(config.lighting(), config.brightness_percent);
                 }
                 UiMessage::Live(on) => host.set_performer(performer(on)),
+                UiMessage::Rescan => host.rescan(),
             }
         }
         for job in queue.drain() {
@@ -394,5 +465,43 @@ fn host_loop(
     let _ = ready.send(());
     loop {
         std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damaged_config_is_backed_up_once_after_valid_save() {
+        let path = std::env::temp_dir().join(format!(
+            "codex-micro-desktop-config-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"{damaged").unwrap();
+        let mut issue = Some(ConfigIssue::Damaged("parse error".into()));
+        let mut config = Config::default();
+        config.bindings.set("ACT06", "hold:nosuchkey");
+        assert!(persist_config(&config, &path, &mut issue).is_err());
+        assert!(matches!(&issue, Some(ConfigIssue::Damaged(_))));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{damaged");
+
+        config.bindings.map.remove("ACT06");
+        persist_config(&config, &path, &mut issue).unwrap();
+        let backup = match &issue {
+            Some(ConfigIssue::BackedUp(path)) => path.clone(),
+            _ => panic!("missing damaged config backup"),
+        };
+        assert_eq!(std::fs::read(&backup).unwrap(), b"{damaged");
+        config.brightness_percent = 40;
+        persist_config(&config, &path, &mut issue).unwrap();
+        assert!(matches!(&issue, Some(ConfigIssue::BackedUp(path)) if path == &backup));
+        assert_eq!(Config::load(&path).unwrap().brightness_percent, 40);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(backup).unwrap();
     }
 }

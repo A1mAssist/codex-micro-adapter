@@ -435,7 +435,15 @@ impl<O: Opener> Host<O> {
     }
 
     pub fn set_bindings(&mut self, bindings: Bindings) {
+        self.cancel_hold();
         self.bindings = bindings;
+    }
+
+    pub fn set_layout(&mut self, layout: Layout) {
+        self.cancel_hold();
+        self.encoder = EncoderHold::default();
+        self.pressed.clear();
+        self.device.set_layout(layout);
     }
 
     /// Hand the control port the same tap slot this host writes to, so a page
@@ -497,7 +505,24 @@ impl<O: Opener> Host<O> {
 
     /// Swap the keystroke sink: dry run <-> live.
     pub fn set_performer(&mut self, performer: Box<dyn Performer>) {
+        self.cancel_hold();
         self.performer = performer;
+    }
+
+    fn cancel_hold(&mut self) {
+        if let Some(combo) = self.held.cancel() {
+            if let Err(err) = self.performer.key_up(&combo) {
+                self.push_log(format!("failed to release {}: {err}", combo.label));
+            }
+        }
+    }
+
+    pub fn rescan(&mut self) {
+        self.cancel_hold();
+        self.encoder = EncoderHold::default();
+        self.pressed.clear();
+        self.device.disconnect();
+        self.last_scan = None;
     }
 
     /// Apply one control command. Returns the reply sent back on the socket.
@@ -647,11 +672,9 @@ impl<O: Opener> Host<O> {
         // a press whose release never arrives (unplugged mid-hold) must not fire
         if !self.device.is_connected() {
             self.encoder = EncoderHold::default();
+            self.pressed.clear();
             // and a held key has to come back up, or Windows keeps it down forever
-            if let Some(combo) = self.held.cancel() {
-                let _ = self.performer.key_up(&combo);
-                self.push_log(format!("release {}", combo.label));
-            }
+            self.cancel_hold();
         }
         // a held key repeats the way a real keyboard does; harnesses that watch
         // for the repeat (Claude Code's push-to-talk) need it to keep going
@@ -796,6 +819,28 @@ fn long_press_trigger(layout: &Layout) -> Trigger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct SharedPerformer(Arc<Mutex<Vec<String>>>);
+    impl Performer for SharedPerformer {
+        fn send_combo(&mut self, _: &Combo) -> Result<(), String> {
+            Ok(())
+        }
+        fn type_text(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn open_url(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn key_down(&mut self, combo: &Combo) -> Result<(), String> {
+            self.0.lock().unwrap().push(format!("down:{}", combo.label));
+            Ok(())
+        }
+        fn key_up(&mut self, combo: &Combo) -> Result<(), String> {
+            self.0.lock().unwrap().push(format!("up:{}", combo.label));
+            Ok(())
+        }
+    }
 
     /// The device is never polled in these tests, so a tiny opener that always
     /// fails is enough; it exists only so `Host::new` has something to hold.
@@ -816,6 +861,76 @@ mod tests {
         ) -> Option<[u8; crate::framing::REPORT_LEN]> {
             None
         }
+    }
+
+    #[test]
+    fn changing_output_or_mapping_releases_the_original_hold() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            Bindings::defaults(),
+            Box::new(SharedPerformer(events.clone())),
+            100,
+            LightingModel::default(),
+        );
+        let space = held("space", 0x20);
+        for change in 0..3 {
+            assert!(matches!(
+                apply_hold(&mut host.held, host.performer.as_mut(), space.clone(), true),
+                Outcome::Hold { down: true, .. }
+            ));
+            match change {
+                0 => host.set_bindings(Bindings::defaults()),
+                1 => host.set_layout(Layout::default()),
+                _ => {
+                    host.set_performer(Box::new(SharedPerformer(Arc::new(Mutex::new(Vec::new())))))
+                }
+            }
+            assert!(host.held.down.is_none());
+        }
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "down:space",
+                "up:space",
+                "down:space",
+                "up:space",
+                "down:space",
+                "up:space"
+            ]
+        );
+    }
+
+    #[test]
+    fn rescan_releases_a_hold_and_makes_discovery_due_now() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut host = Host::new(
+            Device::new(NoOpener, Layout::default(), LightingModel::default()),
+            Bindings::defaults(),
+            Box::new(SharedPerformer(events.clone())),
+            100,
+            LightingModel::default(),
+        );
+        let now = Instant::now();
+        host.pump(now, Duration::ZERO, None);
+        assert!(!host.scan_due(now));
+        apply_hold(
+            &mut host.held,
+            host.performer.as_mut(),
+            held("space", 0x20),
+            true,
+        );
+        host.pressed.insert("ACT06".into());
+
+        host.rescan();
+
+        assert!(host.scan_due(now));
+        assert!(host.snapshot().pressed.is_empty());
+        assert_eq!(*events.lock().unwrap(), ["down:space", "up:space"]);
+        assert_eq!(
+            host.device.state().status,
+            crate::device::Status::NotDetected
+        );
     }
 
     fn encoder_layout(mode: EncoderMode, gesture: &str, action: Action) -> Layout {

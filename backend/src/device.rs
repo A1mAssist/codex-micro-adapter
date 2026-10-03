@@ -320,6 +320,8 @@ impl<O: Opener> Device<O> {
 
     pub fn disconnect(&mut self) -> Vec<Event> {
         self.client = None;
+        self.reconnect_attempt = 0;
+        self.next_reconnect_at = None;
         self.applied_config_key = None;
         self.applied_threads_key = None;
         self.inactivity_at = None;

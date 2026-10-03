@@ -57,10 +57,12 @@ fn usage() {
 /// seems to remember the wrong window. `window --focus <hwnd>` exercises the
 /// focus call itself, which is otherwise only reachable from the keyboard.
 fn print_window(args: &[String]) {
-    if let Some(value) = args.iter().position(|a| a == "--focus").and_then(|i| args.get(i + 1)) {
-        let parsed = value
-            .trim_start_matches("0x")
-            .trim_start_matches("0X");
+    if let Some(value) = args
+        .iter()
+        .position(|a| a == "--focus")
+        .and_then(|i| args.get(i + 1))
+    {
+        let parsed = value.trim_start_matches("0x").trim_start_matches("0X");
         let hwnd = isize::from_str_radix(parsed, 16)
             .or_else(|_| value.parse::<isize>())
             .unwrap_or(0);
@@ -91,7 +93,12 @@ fn send(args: &[String]) {
         eprintln!("usage: codex-micro-backend send \"agent 0 working\"");
         std::process::exit(2);
     }
-    let port = Config::load(&Config::default_path()).control_port;
+    let port = Config::load(&Config::default_path())
+        .unwrap_or_else(|err| {
+            eprintln!("{err}");
+            std::process::exit(2)
+        })
+        .control_port;
     match control::send(port, &line) {
         Ok(reply) => {
             println!("{reply}");
@@ -206,7 +213,10 @@ fn listen(_args: &[String]) {
 #[cfg(windows)]
 fn run(live: bool) {
     let config_path = Config::default_path();
-    let config = Config::load(&config_path);
+    let config = Config::load(&config_path).unwrap_or_else(|err| {
+        eprintln!("{err}");
+        std::process::exit(2)
+    });
     println!("config: {}", config_path.display());
     println!(
         "mode:   {}",

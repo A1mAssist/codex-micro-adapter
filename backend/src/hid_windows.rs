@@ -12,7 +12,10 @@ use crate::rpc::Hid as HidIo;
 use crate::{PID_CODEX_MICRO, PID_CREATOR_MICRO_V2, VENDOR_ID, VENDOR_USAGE_PAGE};
 use std::io;
 use std::mem::size_of;
+use std::os::windows::io::AsRawHandle;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use windows_sys::core::GUID;
@@ -31,6 +34,7 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
+use windows_sys::Win32::System::IO::CancelSynchronousIo;
 
 pub const REPORT_LEN: usize = 64;
 
@@ -209,6 +213,12 @@ struct SendHandle(HANDLE);
 unsafe impl Send for SendHandle {}
 unsafe impl Sync for SendHandle {}
 
+impl Drop for SendHandle {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
 impl SendHandle {
     /// Method (not a field access) so closures capture the whole `SendHandle`
     /// instead of the raw pointer inside it.
@@ -222,7 +232,8 @@ impl SendHandle {
 /// A background thread blocks in `ReadFile` and forwards reports over a channel,
 /// which is what lets `read_report` honour a timeout without overlapped I/O.
 pub struct WindowsHid {
-    handle: SendHandle,
+    handle: Arc<SendHandle>,
+    reader: JoinHandle<()>,
     rx: Receiver<[u8; REPORT_LEN]>,
     /// Set the moment the reader thread stops, so the host can tell "the device
     /// went away" apart from "nothing has arrived yet" without waiting for an
@@ -230,22 +241,23 @@ pub struct WindowsHid {
     closed: Closed,
 }
 
-type Closed = std::sync::Arc<std::sync::atomic::AtomicBool>;
+type Closed = Arc<std::sync::atomic::AtomicBool>;
 
-fn spawn_reader(handle: HANDLE) -> io::Result<(Receiver<[u8; REPORT_LEN]>, Closed)> {
+fn spawn_reader(
+    handle: Arc<SendHandle>,
+) -> io::Result<(Receiver<[u8; REPORT_LEN]>, Closed, JoinHandle<()>)> {
     let (tx, rx): (Sender<[u8; REPORT_LEN]>, Receiver<[u8; REPORT_LEN]>) = mpsc::channel();
     let closed: Closed = Closed::default();
     let flag = closed.clone();
-    let owned = SendHandle(handle);
-    std::thread::Builder::new()
+    let reader = std::thread::Builder::new()
         .name("wl-hid-read".into())
         .spawn(move || {
-            loop {
+            while !flag.load(std::sync::atomic::Ordering::SeqCst) {
                 let mut buf = [0u8; REPORT_LEN];
                 let mut read = 0u32;
                 let ok = unsafe {
                     ReadFile(
-                        owned.raw(),
+                        handle.raw(),
                         buf.as_mut_ptr(),
                         REPORT_LEN as u32,
                         &mut read,
@@ -261,7 +273,7 @@ fn spawn_reader(handle: HANDLE) -> io::Result<(Receiver<[u8; REPORT_LEN]>, Close
             }
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
         })?;
-    Ok((rx, closed))
+    Ok((rx, closed, reader))
 }
 
 impl WindowsHid {
@@ -280,9 +292,11 @@ impl WindowsHid {
             if handle == INVALID_HANDLE_VALUE {
                 return Err(io::Error::last_os_error());
             }
-            let (rx, closed) = spawn_reader(handle)?;
+            let handle = Arc::new(SendHandle(handle));
+            let (rx, closed, reader) = spawn_reader(handle.clone())?;
             Ok(Self {
-                handle: SendHandle(handle),
+                handle,
+                reader,
                 rx,
                 closed,
             })
@@ -292,9 +306,8 @@ impl WindowsHid {
 
 impl Drop for WindowsHid {
     fn drop(&mut self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        unsafe { CloseHandle(self.handle.0) };
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe { CancelSynchronousIo(self.reader.as_raw_handle() as HANDLE) };
     }
 }
 
@@ -303,7 +316,7 @@ impl HidIo for WindowsHid {
         unsafe {
             let mut written = 0u32;
             let ok = WriteFile(
-                self.handle.0,
+                self.handle.raw(),
                 report.as_ptr(),
                 REPORT_LEN as u32,
                 &mut written,
@@ -332,7 +345,7 @@ impl HidIo for WindowsHid {
 /// driving it. HID input is broadcast to every open handle, so watching does not
 /// steal the device.
 pub struct ListenOnly {
-    handle: SendHandle,
+    reader: JoinHandle<()>,
     rx: Receiver<[u8; REPORT_LEN]>,
     closed: Closed,
 }
@@ -354,12 +367,9 @@ impl ListenOnly {
             if handle == INVALID_HANDLE_VALUE {
                 return Err(io::Error::last_os_error());
             }
-            let (rx, closed) = spawn_reader(handle)?;
-            Ok(Self {
-                handle: SendHandle(handle),
-                rx,
-                closed,
-            })
+            let handle = Arc::new(SendHandle(handle));
+            let (rx, closed, reader) = spawn_reader(handle.clone())?;
+            Ok(Self { reader, rx, closed })
         }
     }
 
@@ -376,9 +386,8 @@ impl ListenOnly {
 
 impl Drop for ListenOnly {
     fn drop(&mut self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        unsafe { CloseHandle(self.handle.0) };
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe { CancelSynchronousIo(self.reader.as_raw_handle() as HANDLE) };
     }
 }
 
@@ -411,14 +420,18 @@ mod tests {
     /// path has to come out of the raw buffer at the field's offset.
     #[test]
     fn reads_the_whole_interface_path_out_of_the_detail_buffer() {
-        const PATH: &str = r"\\?\hid#vid_303a&pid_8360#7&2f4d1a1c&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        const PATH: &str =
+            r"\\?\hid#vid_303a&pid_8360#7&2f4d1a1c&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
         let start = std::mem::offset_of!(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath);
         let bytes = start + 2 * (PATH.len() + 1);
         // 8-byte aligned, so the struct view below is a real one like SetupAPI's
         let mut words = vec![0u64; bytes.div_ceil(8)];
-        let buf =
-            unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), words.len() * 8) };
-        buf[..4].copy_from_slice(&(size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() as u32).to_ne_bytes());
+        let buf = unsafe {
+            std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), words.len() * 8)
+        };
+        buf[..4].copy_from_slice(
+            &(size_of::<SP_DEVICE_INTERFACE_DETAIL_DATA_W>() as u32).to_ne_bytes(),
+        );
         for (i, unit) in PATH.encode_utf16().chain(std::iter::once(0)).enumerate() {
             let at = start + i * 2;
             buf[at..at + 2].copy_from_slice(&unit.to_ne_bytes());
