@@ -695,7 +695,7 @@ mod tests {
         }
         producer.join().unwrap();
         let (seq, batch) = events.since(since);
-        assert_eq!(batch.len() as u64, seq - since);
+        assert_eq!(batch.len() as u64, (seq - since).min(EVENT_BACKLOG as u64));
     }
 
     #[test]

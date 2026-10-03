@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1 - 2026-10-03
+
+- Reconnect after USB loss without keeping stale backoff; add a manual rescan
+  beside the connection status and show the device error in settings.
+- Release held keys and clear stuck keyboard-preview presses on disconnect,
+  rescan, or layout changes.
+- Keep a damaged config available for recovery, validate bindings before save,
+  and preserve the last good config when a write fails.
+- Serialize settings saves and reject stale refreshes so rapid edits remain in
+  order. Keep the keycap editor open when saving fails.
+- Keep Windows HID handles alive until their read threads exit.
+
 ## 0.1.0 - 2026-09-30
 
 Product release for Windows 11 x64:

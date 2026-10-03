@@ -15,7 +15,7 @@ carries over the same behaviour: the six agent keys, the keycaps, the analog
 stick, the knob, the microphone key, the lighting derivation behind them, and
 the settings page that configures all of it.
 
-Current release: **v0.1.0** for Windows 11 x64. The host is dry-run by default,
+Current release: **v0.1.1** for Windows 11 x64. The host is dry-run by default,
 so installing it cannot inject keystrokes until you explicitly enable
 **Send keystrokes** in the desktop app or pass `--live` to the console host.
 
@@ -96,7 +96,7 @@ cargo run -p codex-micro-desktop
 
 ### Release process
 
-Push a tag matching the application version, such as `v0.1.0`. GitHub Actions runs the backend, desktop and
+Push a tag matching the application version, such as `v0.1.1`. GitHub Actions runs the backend, desktop and
 adapter checks, then the release workflow builds and attaches the Windows MSI
 and NSIS installers to the GitHub Release. Installer signing and automatic
 updates require repository secrets for a Windows certificate and Tauri updater
@@ -104,10 +104,10 @@ key; the unsigned packages remain suitable for internal and test distribution.
 
 ### Troubleshooting
 
-- **Device not detected:** reconnect the USB cable; the adapter scans and
-  reconnects automatically. If **Connection problem** persists, close another
-  app that may own the keyboard. The settings page shows the connection and
-  firmware state.
+- **Device not detected:** use **Rescan device** beside Connection or reconnect
+  the USB cable; the adapter also scans automatically. If **Connection problem**
+  persists, check the error shown below Connection and close another app that
+  may own the keyboard.
 - **Agent key stays dark:** keep the adapter running, confirm the harness hook
   is trusted, and check that the plugin points at `127.0.0.1:27700`.
 - **No key is injected:** this is expected while dry-run is enabled. Turn on
