@@ -6,7 +6,7 @@
 //!   * ids are integers in `[0, 999)` (firmware constraint);
 //!   * non-ASCII characters are `\uXXXX`-escaped before framing;
 //!   * one request is in flight at a time, with a 50 ms cooldown between calls;
-//!   * a request times out after 10 s;
+//!   * normal requests time out after 10 s; the connection probe may use less;
 //!   * device-initiated notifications carry `method` (or compact `m`) and no `id`.
 
 use crate::framing::{self, CHANNEL_RPC};
@@ -97,6 +97,15 @@ impl<H: Hid> RpcClient<H> {
 
     /// Frame and write one request, then wait for its response.
     pub fn call<P: Serialize>(&mut self, method: &str, params: P) -> Result<Value, RpcError> {
+        self.call_with_timeout(method, params, REQUEST_TIMEOUT)
+    }
+
+    pub fn call_with_timeout<P: Serialize>(
+        &mut self,
+        method: &str,
+        params: P,
+        timeout: Duration,
+    ) -> Result<Value, RpcError> {
         let id = self.alloc_id();
         // Built by hand so the key order matches the vendor's `{method, params, id}`
         // literal byte-for-byte; `serde_json::Value` would sort the keys.
@@ -114,7 +123,7 @@ impl<H: Hid> RpcClient<H> {
                 .map_err(|e| RpcError::Transport(e.to_string()))?;
         }
 
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {

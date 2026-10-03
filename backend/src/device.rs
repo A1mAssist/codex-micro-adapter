@@ -31,6 +31,8 @@ pub const RECONNECT_DELAYS: [Duration; 4] = [
     Duration::from_secs(5),
     Duration::from_secs(10),
 ];
+/// A newly enumerated HID interface should answer this probe quickly.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 /// How often we re-read `device.status` while connected.
 pub const BATTERY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -233,20 +235,23 @@ impl<O: Opener> Device<O> {
         if self.client.is_some() {
             return Vec::new();
         }
+        let Some(candidate) = candidate else {
+            self.reconnect_attempt = 0;
+            self.next_reconnect_at = None;
+            self.transition(Status::NotDetected, None, None, None, None);
+            return vec![Event::StateChanged(self.state.clone())];
+        };
         if let Some(at) = self.next_reconnect_at {
             if now < at {
                 return Vec::new();
             }
         }
-        let Some(candidate) = candidate else {
-            self.transition(Status::NotDetected, None, None, None, None);
-            return vec![Event::StateChanged(self.state.clone())];
-        };
 
+        let started = Instant::now();
         match self.opener.open(&candidate.path) {
             Ok(hid) => {
                 let mut client = RpcClient::new(hid);
-                let events = self.handshake(&mut client, &candidate, now);
+                let events = self.handshake(&mut client, &candidate, now, started);
                 // keep the client only when the handshake succeeded: a half-open
                 // HID handle answers nothing and would wedge the reconnect loop
                 // on `client.is_some()` forever (the keyboard-plugged-in-but-UI-
@@ -258,7 +263,7 @@ impl<O: Opener> Device<O> {
             }
             Err(err) => {
                 self.transition(Status::Error, None, None, Some(err), None);
-                self.schedule_reconnect(now);
+                self.schedule_reconnect(now + started.elapsed());
                 vec![Event::StateChanged(self.state.clone())]
             }
         }
@@ -269,13 +274,18 @@ impl<O: Opener> Device<O> {
         client: &mut RpcClient<O::Hid>,
         candidate: &Candidate,
         now: Instant,
+        started: Instant,
     ) -> Vec<Event> {
         let transport = if candidate.is_usb {
             Transport::Usb
         } else {
             Transport::Bluetooth
         };
-        match client.call(oai::METHOD_SYS_VERSION, serde_json::Value::Null) {
+        match client.call_with_timeout(
+            oai::METHOD_SYS_VERSION,
+            serde_json::Value::Null,
+            HANDSHAKE_TIMEOUT,
+        ) {
             Ok(value) => {
                 let firmware = version_of(&value);
                 self.reconnect_attempt = 0;
@@ -296,7 +306,7 @@ impl<O: Opener> Device<O> {
                     Some(err.to_string()),
                     None,
                 );
-                self.schedule_reconnect(now);
+                self.schedule_reconnect(now + started.elapsed());
                 vec![Event::StateChanged(self.state.clone())]
             }
         }
@@ -348,7 +358,7 @@ impl<O: Opener> Device<O> {
         // unplugged: the reader thread stopped, so polling would just time out
         // forever and the UI would keep showing the last battery reading
         if self.client.as_ref().is_some_and(|c| c.is_closed()) {
-            return self.fail(RpcError::Transport("device removed".into()));
+            return self.disconnect();
         }
         let Some(client) = self.client.as_mut() else {
             return Vec::new();
@@ -564,6 +574,7 @@ pub(crate) mod tests {
     struct MockHid {
         incoming: Arc<Mutex<VecDeque<[u8; REPORT_LEN]>>>,
         written: Arc<Mutex<Vec<String>>>,
+        read_timeouts: Arc<Mutex<Vec<Duration>>>,
         /// reassembling buffer: a short report marks the end of a message
         pending: String,
         /// what the real transport flips when the reader thread stops
@@ -581,7 +592,8 @@ pub(crate) mod tests {
             }
             Ok(())
         }
-        fn read_report(&mut self, _timeout: Duration) -> Option<[u8; REPORT_LEN]> {
+        fn read_report(&mut self, timeout: Duration) -> Option<[u8; REPORT_LEN]> {
+            self.read_timeouts.lock().unwrap().push(timeout);
             self.incoming.lock().unwrap().pop_front()
         }
         fn is_closed(&self) -> bool {
@@ -592,6 +604,7 @@ pub(crate) mod tests {
     struct MockOpener {
         incoming: Arc<Mutex<VecDeque<[u8; REPORT_LEN]>>>,
         written: Arc<Mutex<Vec<String>>>,
+        read_timeouts: Arc<Mutex<Vec<Duration>>>,
         closed: Arc<AtomicBool>,
         fail: bool,
     }
@@ -605,6 +618,7 @@ pub(crate) mod tests {
             Ok(MockHid {
                 incoming: self.incoming.clone(),
                 written: self.written.clone(),
+                read_timeouts: self.read_timeouts.clone(),
                 pending: String::new(),
                 closed: self.closed.clone(),
             })
@@ -653,6 +667,7 @@ pub(crate) mod tests {
         let opener = MockOpener {
             incoming: incoming.clone(),
             written: written.clone(),
+            read_timeouts: Arc::new(Mutex::new(Vec::new())),
             closed: closed.clone(),
             fail: false,
         };
@@ -668,6 +683,7 @@ pub(crate) mod tests {
         let opener = MockOpener {
             incoming: Arc::new(Mutex::new(VecDeque::new())),
             written: Arc::new(Mutex::new(Vec::new())),
+            read_timeouts: Arc::new(Mutex::new(Vec::new())),
             closed: Arc::new(AtomicBool::new(false)),
             fail: true,
         };
@@ -725,7 +741,16 @@ pub(crate) mod tests {
             !r.device.is_connected(),
             "and it reconnects on the next scan"
         );
-        assert_eq!(r.device.state().status, Status::Error);
+        assert_eq!(r.device.state().status, Status::NotDetected);
+        assert_eq!(r.device.next_reconnect_at, None);
+
+        r.closed.store(false, Ordering::SeqCst);
+        r.incoming.lock().unwrap().extend(encode(
+            CHANNEL_RPC,
+            b"{\"result\":{\"version\":\"1\"},\"id\":1}\n",
+        ));
+        let events = r.device.connect(Instant::now(), Some(candidate()));
+        assert!(events.contains(&Event::Connected));
     }
 
     #[test]
@@ -747,6 +772,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn unplug_clears_old_backoff_so_replug_can_connect() {
+        let mut device = failing_rig();
+        let t0 = Instant::now();
+        device.connect(t0, Some(candidate()));
+        assert_eq!(device.state().status, Status::Error);
+        device.connect(t0 + Duration::from_millis(100), None);
+        assert_eq!(device.state().status, Status::NotDetected);
+        assert_eq!(device.reconnect_attempt, 0);
+        assert_eq!(device.next_reconnect_at, None);
+
+        device.opener.fail = false;
+        device.opener.incoming.lock().unwrap().extend(encode(
+            CHANNEL_RPC,
+            b"{\"result\":{\"version\":\"1\"},\"id\":1}\n",
+        ));
+        let events = device.connect(t0 + Duration::from_millis(200), Some(candidate()));
+        assert!(events.contains(&Event::Connected));
+    }
+
+    #[test]
     fn a_failed_handshake_does_not_wedge_the_reconnect_loop() {
         // a transport that opens but never answers: the first connect hands a
         // zombie client back, which used to block every later attempt on
@@ -756,6 +801,10 @@ pub(crate) mod tests {
         r.device.connect(t0, Some(candidate()));
         assert_eq!(r.device.state().status, Status::Error);
         assert!(r.device.client.is_none(), "the half-open handle must go");
+        assert!(
+            r.device.opener.read_timeouts.lock().unwrap()[0] <= HANDSHAKE_TIMEOUT,
+            "connection probing must not wait for the normal 10-second RPC timeout"
+        );
 
         // once the device answers, the next attempt (after the 1 s backoff)
         // must reach it and connect

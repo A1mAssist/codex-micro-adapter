@@ -104,9 +104,10 @@ key; the unsigned packages remain suitable for internal and test distribution.
 
 ### Troubleshooting
 
-- **Device not detected:** close another app that owns the keyboard, reconnect
-  the USB cable, then restart the adapter. The settings page shows the current
-  connection and firmware state.
+- **Device not detected:** reconnect the USB cable; the adapter scans and
+  reconnects automatically. If **Connection problem** persists, close another
+  app that may own the keyboard. The settings page shows the connection and
+  firmware state.
 - **Agent key stays dark:** keep the adapter running, confirm the harness hook
   is trusted, and check that the plugin points at `127.0.0.1:27700`.
 - **No key is injected:** this is expected while dry-run is enabled. Turn on
